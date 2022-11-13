@@ -22,12 +22,6 @@
 
 use std::collections::HashSet;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum ContractType {
-    INTERFACE,
-    CONTRACT,
-}
-
 pub struct Contract {
     pub name: String,
     pub fields: Vec<ContractField>,
