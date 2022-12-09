@@ -2,12 +2,6 @@ FROM rust
 
 RUN apt-get update && \
     apt-get install libclang-dev -y && \
-    apt-get install nodejs -y && \
-    apt-get install npm -y && \
-
-RUN npm install -g n && \
-    npm install -g yarn && \
-    n stable
 
 RUN curl -sSf https://sh.rustup.rs/ | sh -s -- --default-toolchain nightly -y
 

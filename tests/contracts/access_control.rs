@@ -21,8 +21,8 @@
 /// function call, use {hasRole}:
 /// ```
 /// function foo() public {
-/// require(hasRole(MY_ROLE, msg.sender));
-/// ...
+///     require(hasRole(MY_ROLE, msg.sender));
+///     ...
 /// }
 /// ```
 /// Roles can be granted and revoked dynamically via the {grantRole} and
@@ -104,8 +104,8 @@ pub mod access_control {
 
     /// @dev Emitted when `account` is revoked `role`.
     /// `sender` is the account that originated the contract call:
-    /// - if using `revokeRole`, it is the admin role bearer
-    /// - if using `renounceRole`, it is the role bearer (i.e. `account`)
+    ///   - if using `revokeRole`, it is the admin role bearer
+    ///   - if using `renounceRole`, it is the role bearer (i.e. `account`)
     #[ink(event)]
     pub struct RoleRevoked {
         #[ink(topic)]
@@ -175,7 +175,7 @@ pub mod access_control {
 
         /// @dev Revert with a standard message if `account` is missing `role`.
         /// The format of the revert reason is given by the following regular expression:
-        /// /^AccessControl: account (0x[0-9a-f]{40}) is missing role (0x[0-9a-f]{64})$/
+        ///  /^AccessControl: account (0x[0-9a-f]{40}) is missing role (0x[0-9a-f]{64})$/
         fn _check_role(&self, role: [u8; 32], account: AccountId) -> Result<(), Error> {
             if !self.has_role(role, account)? {
                 revert(

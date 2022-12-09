@@ -30,8 +30,8 @@ pub struct RoleGranted {
 
 /// @dev Emitted when `account` is revoked `role`.
 /// `sender` is the account that originated the contract call:
-/// - if using `revokeRole`, it is the admin role bearer
-/// - if using `renounceRole`, it is the role bearer (i.e. `account`)
+///   - if using `revokeRole`, it is the admin role bearer
+///   - if using `renounceRole`, it is the role bearer (i.e. `account`)
 #[ink(event)]
 pub struct RoleRevoked {
     #[ink(topic)]
