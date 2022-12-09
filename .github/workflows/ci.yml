@@ -1,8 +1,10 @@
 name: CI/CD
 
 on:
-  push:
-    branches: [ draft/adding-ci ]
+  pull_request:
+    branches:
+      - main
+      - develop
 
 jobs:
   rustfmt:
@@ -19,7 +21,7 @@ jobs:
           override: true
           components: rustfmt
 
-      - name: Rustfmt check
+      - name: Cargo fmt check
         run: cargo +nightly fmt --all -- --check
   unit-test:
     concurrency:
@@ -35,6 +37,5 @@ jobs:
           override: true
           components: rustfmt, clippy
 
-      - name: Build & Run all default unit tests
-        run: |
-          cargo +nightly test
+      - name: Run all unit tests
+        run: cargo +nightly test
