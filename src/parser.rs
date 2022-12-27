@@ -1414,11 +1414,31 @@ impl<'a> Parser<'a> {
             .insert(String::from("use openbrush::modifier_definition;"));
         self.imports
             .insert(String::from("use openbrush::modifiers;"));
+
         Ok(Modifier {
             header: self.parse_function_header(comments),
-            statements: self.parse_body(),
+            statements: self.get_modifier_statements(),
             comments: comments.to_vec(),
         })
+    }
+
+    fn get_modifier_statements(&mut self) -> Vec<Statement> {
+        let mut statements = self.parse_body();
+        if let Some(statement) = statements.iter().last() {
+            match statement {
+                Statement::Raw(s) => {
+                    if s.trim() == "_;" {
+                        statements.pop();
+                        statements.push(Statement::Raw("_StandardEndStatement;".to_string()));
+                    } else {
+                        statements.push(Statement::Raw("_ResultEndStatement;".to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        statements
     }
 
     /// Parses all modifiers of a function and returns them as a vector of `Modifier` expressions
@@ -1484,6 +1504,10 @@ impl<'a> Parser<'a> {
 
         if line == "_;" {
             return Statement::ModifierBody
+        } else if line == "_StandardEndStatement;" {
+            return Statement::ModifierResult(false)
+        } else if line == "_ResultEndStatement;" {
+            return Statement::ModifierResult(true)
         } else if REGEX_RETURN.is_match(&line) {
             return self.parse_return(&line)
         } else if REGEX_DECLARE.is_match(&line) {
@@ -1994,11 +2018,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // adds `statement` to vec `statements`
-    // fixes the statements if cargo format should fail on the final code
-    //
-    // `statement` the statement to be added
-    // `statements` the vec of statements where we want to add the fixed statement
+    /// adds `statement` to vec `statements`
+    /// fixes the statements if cargo format should fail on the final code
+    ///
+    /// `statement` the statement to be added
+    /// `statements` the vec of statements where we want to add the fixed statement
     fn add_statement(&self, statement: &Statement, statements: &mut Vec<Statement>) {
         match statement {
             Statement::Catch(code) => {

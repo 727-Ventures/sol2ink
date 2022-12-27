@@ -164,6 +164,7 @@ pub enum Statement {
     If(Condition, Vec<Statement>),
     IfEnd,
     ModifierBody,
+    ModifierResult(bool),
     Raw(String),
     Require(Condition, Expression, bool),
     Return(Expression),

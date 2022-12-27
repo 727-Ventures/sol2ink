@@ -1254,8 +1254,19 @@ impl ToTokens for Statement {
             Statement::IfEnd => {}
             Statement::ModifierBody => {
                 stream.extend(quote! {
-                    body(instance);
+                    let result = body(instance);
                 })
+            }
+            Statement::ModifierResult(last_statement) => {
+                if *last_statement {
+                    stream.extend(quote! {
+                        result
+                    })
+                } else {
+                    stream.extend(quote! {
+                        body(instance);
+                    })
+                }
             }
             Statement::Raw(_) => {}
             Statement::Require(condition_raw, expression_raw, constructor) => {
