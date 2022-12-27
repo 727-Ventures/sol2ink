@@ -21,7 +21,7 @@
 // SOFTWARE.
 
 const INK_VERSION: &str = "~3.4.0";
-const OPENBRUSH_VERSION: &str = "2.3.0";
+// const OPENBRUSH_VERSION: &str = "2.3.0";
 
 pub fn generate_cargo_toml(mod_name: Option<String>) -> String {
     let mut out = String::new();

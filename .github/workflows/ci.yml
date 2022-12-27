@@ -1,0 +1,41 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  rustfmt:
+    concurrency:
+      group: rustfmt-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          components: rustfmt
+
+      - name: Cargo fmt check
+        run: cargo +nightly fmt --all -- --check
+  unit-test:
+    concurrency:
+      group: unit-test-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          components: rustfmt, clippy
+
+      - name: Run all unit tests
+        run: cargo +nightly test
