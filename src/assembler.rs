@@ -293,7 +293,7 @@ pub fn assemble_library(library: Library) -> TokenStream {
     library
 }
 
-fn assemble_contract_doc(comments: &Vec<String>) -> TokenStream {
+fn assemble_contract_doc(comments: &[String]) -> TokenStream {
     let mut output = TokenStream::new();
 
     // assemble comments
@@ -312,7 +312,7 @@ fn assemble_imports(imports: &HashSet<String>) -> TokenStream {
     let output_vec = Vec::from_iter(imports);
 
     for import in output_vec {
-        output.extend(TokenStream::from_str(&import).unwrap());
+        output.extend(TokenStream::from_str(import).unwrap());
     }
 
     output

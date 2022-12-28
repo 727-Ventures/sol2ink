@@ -1424,17 +1424,12 @@ impl<'a> Parser<'a> {
 
     fn get_modifier_statements(&mut self) -> Vec<Statement> {
         let mut statements = self.parse_body();
-        if let Some(statement) = statements.iter().last() {
-            match statement {
-                Statement::Raw(s) => {
-                    if s.trim() == "_;" {
-                        statements.pop();
-                        statements.push(Statement::Raw("_StandardEndStatement;".to_string()));
-                    } else {
-                        statements.push(Statement::Raw("_ResultEndStatement;".to_string()));
-                    }
-                }
-                _ => {}
+        if let Some(Statement::Raw(s)) = statements.iter().last() {
+            if s.trim() == "_;" {
+                statements.pop();
+                statements.push(Statement::Raw("_StandardEndStatement;".to_string()));
+            } else {
+                statements.push(Statement::Raw("_ResultEndStatement;".to_string()));
             }
         }
 

@@ -101,7 +101,7 @@ pub fn write_files(
     // impl
     let base_path = format!(
         "{}/{contract_name}",
-        file_name.clone().unwrap_or_else(|| String::from("output"))
+        file_name.unwrap_or_else(|| String::from("output"))
     );
     create_dir_all(&base_path)?;
 
