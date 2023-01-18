@@ -30,6 +30,7 @@ use convert_case::{
     Case::Snake,
     Casing,
 };
+use rbtree::RBTree;
 use solang_parser::{
     parse,
     pt::{
@@ -85,12 +86,18 @@ impl From<std::io::Error> for ParserError {
 
 pub struct Parser<'a> {
     members_map: &'a mut HashMap<String, MemberType>,
+    rb_tree: &'a mut RBTree<usize, String>, /* TODO
+                                             * binary search tree mapping key: usize (Loc::File(_,key,_)), value: Statement */
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(fields_map: &'a mut HashMap<String, MemberType>) -> Self {
+    pub fn new(
+        fields_map: &'a mut HashMap<String, MemberType>,
+        rb_tree: &'a mut RBTree<usize, String>,
+    ) -> Self {
         Parser {
             members_map: fields_map,
+            rb_tree,
         }
     }
 
@@ -99,7 +106,21 @@ impl<'a> Parser<'a> {
 
         let mut output = Vec::new();
         let source_unit = token_tree.0;
-        let _comments = token_tree.1;
+        let comments = token_tree.1;
+
+        // TODO
+        // iterate over comments and add them to a structure (binary tree key: loc, value: comment)
+        comments.iter().for_each(|comment| {
+            match comment {
+                solang_parser::pt::Comment::Line(loc, comment) => {
+                    self.rb_tree.insert(loc.start(), comment.clone());
+                }
+                solang_parser::pt::Comment::Block(loc, comment) => todo!(),
+                solang_parser::pt::Comment::DocLine(loc, comment) => todo!(),
+                solang_parser::pt::Comment::DocBlock(loc, comment) => todo!(),
+            }
+        });
+        // this binary tree would be field of parser
 
         for source_unit_part in source_unit.0.iter() {
             match &source_unit_part {
@@ -125,7 +146,9 @@ impl<'a> Parser<'a> {
                     "Abstract contract can not be instantiated so we only create impl and trait for it"
                 )
             }
-            ContractTy::Contract(_) => {
+            ContractTy::Contract(loc /* loc */) => {
+                // TODO
+                // add to the tree (loc, contract)
                 Ok(ParserOutput::Contract(
                     self.parse_contract(contract_definition)?,
                 ))
@@ -365,6 +388,8 @@ impl<'a> Parser<'a> {
 
     fn parse_struct(&self, struct_definition: &StructDefinition) -> Result<Struct, ParserError> {
         let name = self.parse_identifier(&struct_definition.name);
+        // TODO
+        // struct_definition.loc -> add to tree key:struct_definition.loc, val: struct_definition
 
         let fields: Vec<StructField> = struct_definition
             .fields

@@ -1,15 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(min_specialization)]
 
-// Generated with Sol2Ink v1.1.0
+// Generated with Sol2Ink v2.0.0-beta
 // https://github.com/Supercolony-net/sol2ink
 
-///SPDX-License-Identifier: MIT
-///OpenZeppelin Contracts (last updated v4.7.0) (token/ERC1155/ERC1155.sol)
-/// @dev Implementation of the basic standard multi-token.
-/// See https://eips.ethereum.org/EIPS/eip-1155
-/// Originally based on code by Enjin: https://github.com/enjin/erc-1155
-/// _Available since v3.1._
 #[openbrush::contract]
 pub mod erc_1155 {
     use erc_1155::*;
@@ -17,25 +11,14 @@ pub mod erc_1155 {
         EmitEvent,
         Env,
     };
-    use ink_prelude::vec::Vec;
     use ink_storage::traits::SpreadAllocate;
-    use openbrush::{
-        storage::Mapping,
-        traits::{
-            AccountId,
-            AccountIdExt,
-            Storage,
-            String,
-            ZERO_ADDRESS,
-        },
-    };
+    use openbrush::traits::Storage;
     use scale::{
         Decode,
         Encode,
     };
 
 
-    /// @dev Emitted when `value` tokens of token type `id` are transferred from `from` to `to` by `operator`.
     #[ink(event)]
     pub struct TransferSingle {
         #[ink(topic)]
@@ -48,8 +31,6 @@ pub mod erc_1155 {
         value: u128,
     }
 
-    /// @dev Equivalent to multiple {TransferSingle} events, where `operator`, `from` and `to` are the same for all
-    /// transfers.
     #[ink(event)]
     pub struct TransferBatch {
         #[ink(topic)]
@@ -62,8 +43,6 @@ pub mod erc_1155 {
         values: Vec<u128>,
     }
 
-    /// @dev Emitted when `account` grants or revokes permission to `operator` to transfer their tokens, according to
-    /// `approved`.
     #[ink(event)]
     pub struct ApprovalForAll {
         #[ink(topic)]
@@ -73,10 +52,6 @@ pub mod erc_1155 {
         approved: bool,
     }
 
-    /// @dev Emitted when the URI for token type `id` changes to `value`, if it is a non-programmatic URI.
-    /// If an {URI} event was emitted for `id`, the standard
-    /// https://eips.ethereum.org/EIPS/eip-1155#metadata-extensions[guarantees] that `value` will equal the value
-    /// returned by {IERC1155MetadataURI-uri}.
     #[ink(event)]
     pub struct URI {
         value: String,
@@ -143,11 +118,10 @@ pub mod erc_1155 {
     }
 
     impl ERC1155Contract {
-        /// @dev See {_setURI}.
         #[ink(constructor)]
         pub fn new(uri: String) -> Self {
             ink_lang::codegen::initialize_contract(|instance: &mut Self| {
-                instance._set_uri(uri)?;
+                self._set_uri(uri)?;
             })
         }
 

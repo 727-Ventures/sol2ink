@@ -1,13 +1,7 @@
-// Generated with Sol2Ink v1.1.0
+// Generated with Sol2Ink v2.0.0-beta
 // https://github.com/Supercolony-net/sol2ink
 
-use ink_prelude::vec::Vec;
-use openbrush::traits::{
-    AccountId,
-    String,
-};
 
-/// @dev Emitted when `value` tokens of token type `id` are transferred from `from` to `to` by `operator`.
 #[ink(event)]
 pub struct TransferSingle {
     #[ink(topic)]
@@ -20,8 +14,6 @@ pub struct TransferSingle {
     value: u128,
 }
 
-/// @dev Equivalent to multiple {TransferSingle} events, where `operator`, `from` and `to` are the same for all
-/// transfers.
 #[ink(event)]
 pub struct TransferBatch {
     #[ink(topic)]
@@ -34,8 +26,6 @@ pub struct TransferBatch {
     values: Vec<u128>,
 }
 
-/// @dev Emitted when `account` grants or revokes permission to `operator` to transfer their tokens, according to
-/// `approved`.
 #[ink(event)]
 pub struct ApprovalForAll {
     #[ink(topic)]
@@ -45,10 +35,6 @@ pub struct ApprovalForAll {
     approved: bool,
 }
 
-/// @dev Emitted when the URI for token type `id` changes to `value`, if it is a non-programmatic URI.
-/// If an {URI} event was emitted for `id`, the standard
-/// https://eips.ethereum.org/EIPS/eip-1155#metadata-extensions[guarantees] that `value` will equal the value
-/// returned by {IERC1155MetadataURI-uri}.
 #[ink(event)]
 pub struct URI {
     value: String,
@@ -57,19 +43,13 @@ pub struct URI {
 }
 
 #[openbrush::wrapper]
-pub type ERC1155Ref = dyn ERC1155;
+pub type IERC1155Ref = dyn IERC1155;
 
 #[openbrush::trait_definition]
-pub trait ERC1155 {
-    /// @dev Returns the amount of tokens of token type `id` owned by `account`.
-    /// Requirements:
-    /// - `account` cannot be the zero address.
+pub trait IERC1155 {
     #[ink(message)]
     fn balance_of(&self, account: AccountId, id: u128) -> Result<u128, Error>;
 
-    /// @dev xref:ROOT:erc1155.adoc#batch-operations[Batched] version of {balanceOf}.
-    /// Requirements:
-    /// - `accounts` and `ids` must have the same length.
     #[ink(message)]
     fn balance_of_batch(
         &self,
@@ -77,26 +57,12 @@ pub trait ERC1155 {
         ids: Vec<u128>,
     ) -> Result<Vec<u128>, Error>;
 
-    /// @dev Grants or revokes permission to `operator` to transfer the caller's tokens, according to `approved`,
-    /// Emits an {ApprovalForAll} event.
-    /// Requirements:
-    /// - `operator` cannot be the caller.
     #[ink(message)]
     fn set_approval_for_all(&mut self, operator: AccountId, approved: bool) -> Result<(), Error>;
 
-    /// @dev Returns true if `operator` is approved to transfer ``account``'s tokens.
-    /// See {setApprovalForAll}.
     #[ink(message)]
     fn is_approved_for_all(&self, account: AccountId, operator: AccountId) -> Result<bool, Error>;
 
-    /// @dev Transfers `amount` tokens of token type `id` from `from` to `to`.
-    /// Emits a {TransferSingle} event.
-    /// Requirements:
-    /// - `to` cannot be the zero address.
-    /// - If the caller is not `from`, it must have been approved to spend ``from``'s tokens via {setApprovalForAll}.
-    /// - `from` must have a balance of tokens of type `id` of at least `amount`.
-    /// - If `to` refers to a smart contract, it must implement {IERC1155Receiver-onERC1155Received} and return the
-    /// acceptance magic value.
     #[ink(message)]
     fn safe_transfer_from(
         &mut self,
@@ -107,12 +73,6 @@ pub trait ERC1155 {
         data: Vec<u8>,
     ) -> Result<(), Error>;
 
-    /// @dev xref:ROOT:erc1155.adoc#batch-operations[Batched] version of {safeTransferFrom}.
-    /// Emits a {TransferBatch} event.
-    /// Requirements:
-    /// - `ids` and `amounts` must have the same length.
-    /// - If `to` refers to a smart contract, it must implement {IERC1155Receiver-onERC1155BatchReceived} and return the
-    /// acceptance magic value.
     #[ink(message)]
     fn safe_batch_transfer_from(
         &mut self,

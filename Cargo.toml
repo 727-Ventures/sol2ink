@@ -7,6 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rbtree = "0.1.5"
 convert_case = "0.6.0"
 substring = "1.4.5"
 rust-format = { version = "0.3.4", features = ["token_stream", "post_process"] }
