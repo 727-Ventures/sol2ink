@@ -1,6 +1,6 @@
 [package]
-name = "sol_2_ink_generated"
-version = "0.1.0"
+name = "contract"
+version = 2.0.0-beta"
 edition = "2021"
 authors = ["Sol2Ink"]
 
@@ -15,7 +15,7 @@ ink_engine = { version = "~3.4.0", default-features = false, optional = true }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2", default-features = false, features = ["derive"], optional = true }
 openbrush = { git = "https://github.com/Supercolony-net/openbrush-contracts", tag = "v2.3.0", default-features = false, features = [] }
-erc_1155 = { path = "..", default-features = false }
+erc_1155 = { path = "../erc_1155", default-features = false }
 
 [lib]
 name = "sol_2_ink_generated"
@@ -35,5 +35,6 @@ std = [
 "scale-info",
 "scale-info/std",
 "openbrush/std",
+"erc_1155/std"
 ]
 

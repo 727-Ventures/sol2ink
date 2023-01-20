@@ -2,7 +2,7 @@
 #![feature(min_specialization)]
 
 // Generated with Sol2Ink v2.0.0-beta
-// https://github.com/Supercolony-net/sol2ink
+// https://github.com/727-Ventures/sol2ink
 
 #[openbrush::contract]
 pub mod erc_1155 {
@@ -121,7 +121,7 @@ pub mod erc_1155 {
         #[ink(constructor)]
         pub fn new(uri: String) -> Self {
             ink_lang::codegen::initialize_contract(|instance: &mut Self| {
-                self._set_uri(uri)?;
+                instance._set_uri(uri)?;
             })
         }
 

@@ -1,5 +1,5 @@
 // Generated with Sol2Ink v2.0.0-beta
-// https://github.com/Supercolony-net/sol2ink
+// https://github.com/727-Ventures/sol2ink
 
 pub use crate::{
     impls,
@@ -248,12 +248,10 @@ impl<T: Storage<Data>> Internal for T {
                 "ERC1155: insufficient balance for transfer",
             )))
         };
-        // Please handle unchecked blocks manually >>>
         self.data()
             .balances
-            .insert(&(id, from), &(from_balance - amount));
-        // <<< Please handle unchecked blocks manually
-        let new_value = self.data().balances.get(&(id, to)).unwrap_or_default();
+            .insert(&(id, from), &from_balance - amount);
+        let new_value = self.data().balances.get(&(id, to)).unwrap_or_default() + amount;
         self.data().balances.insert(&(id, to), &new_value);
         self._emit_transfer_single(operator, from, to, id, amount);
         self._after_token_transfer(operator, from, to, ids, amounts, data)?;
@@ -291,12 +289,10 @@ impl<T: Storage<Data>> Internal for T {
                     "ERC1155: insufficient balance for transfer",
                 )))
             };
-            // Please handle unchecked blocks manually >>>
             self.data()
                 .balances
-                .insert(&(id, from), &(from_balance - amount));
-            // <<< Please handle unchecked blocks manually
-            let new_value = self.data().balances.get(&(id, to)).unwrap_or_default();
+                .insert(&(id, from), &from_balance - amount);
+            let new_value = self.data().balances.get(&(id, to)).unwrap_or_default() + amount;
             self.data().balances.insert(&(id, to), &new_value);
             i += 1;
         }
@@ -327,7 +323,7 @@ impl<T: Storage<Data>> Internal for T {
         let mut ids: Vec<u128> = self._as_singleton_array(id)?;
         let mut amounts: Vec<u128> = self._as_singleton_array(amount)?;
         self._before_token_transfer(operator, ZERO_ADDRESS.into(), to, ids, amounts, data)?;
-        let new_value = self.data().balances.get(&(id, to)).unwrap_or_default();
+        let new_value = self.data().balances.get(&(id, to)).unwrap_or_default() + amount;
         self.data().balances.insert(&(id, to), &new_value);
         self._emit_transfer_single(operator, ZERO_ADDRESS.into(), to, id, amount);
         self._after_token_transfer(operator, ZERO_ADDRESS.into(), to, ids, amounts, data)?;
@@ -363,7 +359,8 @@ impl<T: Storage<Data>> Internal for T {
         self._before_token_transfer(operator, ZERO_ADDRESS.into(), to, ids, amounts, data)?;
         let mut i: u128 = 0;
         while i < ids.length {
-            let new_value = self.data().balances.get(&(ids[i], to)).unwrap_or_default();
+            let new_value =
+                self.data().balances.get(&(ids[i], to)).unwrap_or_default() + amounts[i];
             self.data().balances.insert(&(ids[i], to), &new_value);
             i += 1;
         }
@@ -396,11 +393,9 @@ impl<T: Storage<Data>> Internal for T {
                 "ERC1155: burn amount exceeds balance",
             )))
         };
-        // Please handle unchecked blocks manually >>>
         self.data()
             .balances
-            .insert(&(id, from), &(from_balance - amount));
-        // <<< Please handle unchecked blocks manually
+            .insert(&(id, from), &from_balance - amount);
         self._emit_transfer_single(operator, from, ZERO_ADDRESS.into(), id, amount);
         self._after_token_transfer(operator, from, ZERO_ADDRESS.into(), ids, amounts, "")?;
         Ok(())
@@ -434,11 +429,9 @@ impl<T: Storage<Data>> Internal for T {
                     "ERC1155: burn amount exceeds balance",
                 )))
             };
-            // Please handle unchecked blocks manually >>>
             self.data()
                 .balances
-                .insert(&(id, from), &(from_balance - amount));
-            // <<< Please handle unchecked blocks manually
+                .insert(&(id, from), &from_balance - amount);
             i += 1;
         }
         self._emit_transfer_batch(operator, from, ZERO_ADDRESS.into(), ids, amounts);
