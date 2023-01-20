@@ -95,8 +95,9 @@ pub fn write_files(
     contract_file.write_all(rust_fmt.format_tokens(contract).unwrap().as_bytes())?;
 
     let mut cargo_toml = File::create(format!("{contract_path}/Cargo.toml"))?;
-    cargo_toml
-        .write_all(toml_builder::generate_cargo_toml(Some(contract_name.clone())).as_bytes())?;
+    cargo_toml.write_all(
+        toml_builder::generate_cargo_toml("contract", Some(contract_name.clone())).as_bytes(),
+    )?;
 
     // impl
     let base_path = format!(
@@ -116,7 +117,8 @@ pub fn write_files(
     lib_file.write_all(rust_fmt.format_tokens(lib_definition).unwrap().as_bytes())?;
 
     let mut main_cargo_toml = File::create(format!("{base_path}/Cargo.toml"))?;
-    main_cargo_toml.write_all(toml_builder::generate_cargo_toml(None).as_bytes())?;
+    main_cargo_toml
+        .write_all(toml_builder::generate_cargo_toml(&contract_name, None).as_bytes())?;
 
     Ok(())
 }

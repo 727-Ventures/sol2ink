@@ -2,7 +2,7 @@
 #![feature(min_specialization)]
 
 // Generated with Sol2Ink v2.0.0-beta
-// https://github.com/Supercolony-net/sol2ink
+// https://github.com/727-Ventures/sol2ink
 
 #[openbrush::contract]
 pub mod erc_20 {
@@ -64,7 +64,10 @@ pub mod erc_20 {
     impl ERC20Contract {
         #[ink(constructor)]
         pub fn new(name: String, symbol: String) -> Self {
-            ink_lang::codegen::initialize_contract(|instance: &mut Self| {})
+            ink_lang::codegen::initialize_contract(|instance: &mut Self| {
+                self.data().name = name;
+                self.data().symbol = symbol;
+            })
         }
 
     }

@@ -23,6 +23,7 @@
 use crate::structures::*;
 use convert_case::{
     Case::{
+        self,
         Pascal,
         Snake,
         UpperSnake,
@@ -35,7 +36,10 @@ use proc_macro2::{
 };
 use quote::*;
 use std::{
-    collections::HashSet,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     str::FromStr,
 };
 
@@ -103,6 +107,11 @@ pub fn assemble_impl(contract: &Contract) -> TokenStream {
     let imports = assemble_imports(&contract.imports);
     let data = assemble_data_struct(&contract.fields);
     let getters = assemble_getters(&contract.fields);
+    let mut modifiers_map = HashMap::new();
+    contract.modifiers.iter().for_each(|function| {
+        modifiers_map.insert(function.header.name.clone(), function.clone());
+    });
+
     let functions = assemble_functions(
         &contract
             .functions
@@ -321,7 +330,7 @@ fn assemble_enums(enums: &[Enum]) -> TokenStream {
 
     for enumeration in enums.iter() {
         let enum_name =
-            TokenStream::from_str(&format_expression(&enumeration.name).to_case(Pascal)).unwrap();
+            TokenStream::from_str(&format_expression(&enumeration.name, Pascal)).unwrap();
         let mut enum_comments = TokenStream::new();
         let mut values = TokenStream::new();
 
@@ -394,7 +403,7 @@ fn assemble_events(events: &[Event]) -> TokenStream {
                 });
             }
 
-            let event_field_name = format_ident!("{}", format_expression(&event_field.name));
+            let event_field_name = format_ident!("{}", format_expression(&event_field.name, Snake));
             let event_field_type = &event_field.field_type;
 
             event_fields.extend(quote! {
@@ -515,7 +524,7 @@ fn assemble_constants(fields: &[ContractField]) -> TokenStream {
 
     // assemble storage fields
     for field in fields.iter().filter(|field| field.constant) {
-        let field_name = format_ident!("{}", format_expression(&field.name).to_case(UpperSnake));
+        let field_name = format_ident!("{}", format_expression(&field.name, UpperSnake));
         let field_type = &field.field_type;
         let initial_value = field.initial_value.clone().unwrap();
 
@@ -541,7 +550,8 @@ fn assemble_structs(structs: &[Struct]) -> TokenStream {
     let mut output = TokenStream::new();
 
     for structure in structs.iter() {
-        let struct_name = TokenStream::from_str(&format_expression(&structure.name)).unwrap();
+        let struct_name =
+            TokenStream::from_str(&format_expression(&structure.name, Pascal)).unwrap();
         let mut struct_comments = TokenStream::new();
         let mut struct_fields = TokenStream::new();
 
@@ -560,7 +570,8 @@ fn assemble_structs(structs: &[Struct]) -> TokenStream {
                     #[doc = #comment]
                 })
             }
-            let struct_field_name = format_ident!("{}", &format_expression(&struct_field.name));
+            let struct_field_name =
+                format_ident!("{}", &format_expression(&struct_field.name, Snake));
 
             let struct_field_type = &struct_field.field_type;
 
@@ -656,6 +667,8 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
         let mut body = TokenStream::new();
         let mut comments = TokenStream::new();
         let mut function_modifiers = TokenStream::new();
+        let invalid_modifiers = &function.invalid_modifiers;
+        let invalid_modifiers_vec = &function.header.invalid_modifiers;
         let statement = function.body.clone();
 
         // assemble comments
@@ -667,7 +680,7 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
 
         for function_modifier in function.header.modifiers.iter() {
             function_modifiers.extend(quote! {
-                #[modifiers(#function_modifier)]
+                #function_modifier
             });
         }
 
@@ -675,23 +688,19 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
         function_name.extend(
             TokenStream::from_str(&format!(
                 "{}fn {}{}",
-                if !function.header.external {
-                    String::from("default ")
-                } else if is_library {
+                if is_library {
                     String::from("pub ")
+                } else if !function.header.external {
+                    String::from("default ")
                 } else {
                     String::new()
                 },
-                if !function.header.external {
+                if !function.header.external && !is_library {
                     String::from("_")
                 } else {
                     String::new()
                 },
-                if function.header.external {
-                    format_expression(&function.header.name)
-                } else {
-                    function.header.name.to_case(Snake)
-                }
+                format_expression(&function.header.name, Snake)
             ))
             .unwrap(),
         );
@@ -707,7 +716,7 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
 
         // assemble params
         for param in function.header.params.iter() {
-            let param_name = format_ident!("{}", &format_expression(&param.name));
+            let param_name = format_ident!("{}", &format_expression(&param.name, Snake));
             let param_type = &param.param_type;
 
             params.extend(quote! {
@@ -733,7 +742,7 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
 
                 if param.name != "_" {
                     let param_name =
-                        TokenStream::from_str(&format_expression(&param.name)).unwrap();
+                        TokenStream::from_str(&format_expression(&param.name, Snake)).unwrap();
                     body.extend(quote! {
                         let mut #param_name = Default::default();
                     })
@@ -755,31 +764,6 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
             });
         }
 
-        // @notice Rust fmt will panic if a return statement is followed by a statement
-        // we will switch the order of the comments and the return statement
-        // TODO: Dear reviewer. Ask me about this because I maybe forgot :)
-        // if !function.header.return_params.is_empty() && function.header.return_params[0].name == "_"
-        // {
-        //     let mut ordered = VecDeque::<Statement>::default();
-        //     while let Some(Statement::Comment(_)) = statements.iter().last() {
-        //         ordered.push_front(statements.pop().unwrap());
-        //     }
-        //     // the last statement now is the return statement
-        //     if !ordered.is_empty() {
-        //         let return_statement = statements.pop().unwrap();
-        //         // we insert a comment that we reordered
-        //         statements.push(Statement::Comment(
-        //             "Following statements were found after the return statement >>>".to_string(),
-        //         ));
-        //         // append ordered to statements
-        //         statements.append(&mut ordered.into_iter().collect());
-        //         statements.push(Statement::Comment(
-        //             "<<< Following statements were found after the return statement".to_string(),
-        //         ));
-        //         statements.push(return_statement);
-        //     }
-        // }
-
         // body
         body.extend(quote! {
             #statement
@@ -790,36 +774,66 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
                 Ok(())
             });
         } else if function.header.return_params[0].name != "_" {
-            let _out = TokenStream::from_str(
+            let out = TokenStream::from_str(
                 &function
                     .header
                     .return_params
                     .iter()
-                    .map(|param| format_expression(&param.name))
+                    .map(|param| format_expression(&param.name, Snake))
                     .collect::<Vec<String>>()
                     .join(","),
             )
             .unwrap();
-            // TODO
-            // if !statements.iter().any(|s| matches!(s, Statement::Return(_))) {
-            //     body.extend(
-            //         if function.header.return_params.len() > 1 {
-            //             quote! {
-            //                 Ok((#out))
-            //             }
-            //         } else {
-            //             quote! {
-            //                 Ok(#out)
-            //             }
-            //         },
-            //     );
-            // }
+            if !has_return_statement(&statement) {
+                body.extend(
+                    if function.header.return_params.len() > 1 {
+                        quote! {
+                            Ok((#out))
+                        }
+                    } else {
+                        quote! {
+                            Ok(#out)
+                        }
+                    },
+                );
+            }
+        }
+
+        let mut forgot_modifiers = TokenStream::new();
+        for modifier in invalid_modifiers_vec {
+            let (modifier_name, arguments) = match modifier {
+                Expression::InvalidModifier(name, expressions) => (name, expressions),
+                _ => unreachable!("Only invalid modifiers allowed here"),
+            };
+            // arguments map to modifier params
+            if let Some(function) =
+                invalid_modifiers.get(&(function.header.name.clone(), modifier_name.clone()))
+            {
+                if let Some(statement) = &function.body {
+                    let vars = &function.header.params;
+                    forgot_modifiers.extend(quote!(
+                        #(let #vars = #arguments;)*
+                    ));
+                    match statement {
+                        Statement::Block(statements) | Statement::UncheckedBlock(statements) => {
+                            for statement in statements {
+                                match statement.clone() {
+                                    Statement::Expression(Expression::ModifierBody) => {}
+                                    _ => forgot_modifiers.extend(quote!(#statement)),
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
         }
 
         output.extend(quote! {
             #comments
             #function_modifiers
             #function_name(#view #params) -> Result<#return_params, Error> {
+                #forgot_modifiers
                 #body
             }
         });
@@ -830,6 +844,23 @@ fn assemble_functions(functions: &[Function], is_library: bool) -> TokenStream {
     }
 
     output
+}
+
+fn has_return_statement(statement: &Option<Statement>) -> bool {
+    match statement {
+        Some(statement) => {
+            match statement {
+                Statement::Block(statements) | Statement::UncheckedBlock(statements) => {
+                    if statements.is_empty() {
+                        return false
+                    }
+                    matches!(statements.last().unwrap(), Statement::Return(..))
+                }
+                _ => false,
+            }
+        }
+        None => false,
+    }
 }
 
 fn assemble_emit_functions(events: &[Event]) -> (TokenStream, TokenStream) {
@@ -844,7 +875,7 @@ fn assemble_emit_functions(events: &[Event]) -> (TokenStream, TokenStream) {
 
         // assemble event fields
         for event_field in event.fields.iter() {
-            let event_field_name = format_ident!("{}", format_expression(&event_field.name));
+            let event_field_name = format_ident!("{}", format_expression(&event_field.name, Snake));
             let event_field_type = &event_field.field_type;
 
             event_args.extend(quote! {
@@ -881,7 +912,7 @@ fn assemble_contract_emit_functions(events: &[Event]) -> TokenStream {
 
         // assemble event fields
         for event_field in event.fields.iter() {
-            let event_field_name = format_ident!("{}", format_expression(&event_field.name));
+            let event_field_name = format_ident!("{}", format_expression(&event_field.name, Snake));
             let event_field_type = &event_field.field_type;
 
             event_params.extend(quote! {
@@ -904,22 +935,15 @@ fn assemble_contract_emit_functions(events: &[Event]) -> TokenStream {
 }
 
 /// Assembles ink! functions from the vec of parsed Function structs and return them as a vec of Strings
-fn assemble_modifiers(modifiers: &[Modifier], contract_name: &Ident) -> TokenStream {
+fn assemble_modifiers(modifiers: &[Function], contract_name: &Ident) -> TokenStream {
     let mut output = TokenStream::new();
 
     for modifier in modifiers.iter() {
-        let modifier_name = format_ident!("{}", format_expression(&modifier.header.name));
-        let mut body = TokenStream::new();
-        let mut comments = TokenStream::new();
+        let modifier_name = format_ident!("{}", format_expression(&modifier.header.name, Snake));
         let mut params = TokenStream::new();
 
         // assemble comments
-        for comment in modifier.comments.iter() {
-            comments.extend(quote! {
-                #[doc = #comment]
-            });
-        }
-        let statements = &modifier.statements;
+        let body = &modifier.body;
 
         // assemble params
         for param in modifier.header.params.iter() {
@@ -931,13 +955,7 @@ fn assemble_modifiers(modifiers: &[Modifier], contract_name: &Ident) -> TokenStr
             });
         }
 
-        // body
-        body.extend(quote! {
-            #(#statements)*
-        });
-
         output.extend(quote! {
-            #comments
             #[modifier_definition]
             pub fn #modifier_name<T, F, R>(instance: &mut T, body: F #params) -> Result<R, Error>
             where
@@ -993,7 +1011,7 @@ fn assemble_function_headers(function_headers: &[FunctionHeader]) -> TokenStream
             TokenStream::from_str(&format!(
                 "fn {}{}",
                 if header.external { "" } else { "_" },
-                format_expression(&header.name)
+                format_expression(&header.name, Snake)
             ))
             .unwrap(),
         );
@@ -1009,7 +1027,7 @@ fn assemble_function_headers(function_headers: &[FunctionHeader]) -> TokenStream
 
         // assemble params
         for param in header.params.iter() {
-            let param_name = format_ident!("{}", format_expression(&param.name));
+            let param_name = format_ident!("{}", format_expression(&param.name, Snake));
             let param_type = &param.param_type;
 
             params.extend(quote! {
@@ -1064,7 +1082,7 @@ fn assemble_function_headers(function_headers: &[FunctionHeader]) -> TokenStream
 fn signature() -> TokenStream {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     let version = &format!("Generated with Sol2Ink v{VERSION}\n");
-    let link = "https://github.com/Supercolony-net/sol2ink\n";
+    let link = "https://github.com/727-Ventures/sol2ink\n";
     quote! {
         _comment_!(#version);
         _comment_!(#link);
@@ -1072,16 +1090,15 @@ fn signature() -> TokenStream {
     }
 }
 
-fn format_expression(expression_raw: &String) -> String {
-    let output = if RUST_KEYWORDS.contains(&expression_raw.as_str()) {
-        format!("{}_is_rust_keyword", &expression_raw)
+fn format_expression(expression_raw: &String, case: Case) -> String {
+    if expression_raw == "_" {
+        return expression_raw.clone()
+    }
+    let desired_name = expression_raw.to_case(case);
+    if RUST_KEYWORDS.contains(&desired_name.as_str()) {
+        format!("{}_is_rust_keyword", &desired_name)
     } else {
-        expression_raw.to_string()
-    };
-    if &output == "_" {
-        output
-    } else {
-        output.to_case(Snake)
+        desired_name
     }
 }
 
@@ -1095,7 +1112,9 @@ impl ToTokens for Type {
             Type::Uint(size) => TokenStream::from_str(&format!("u{size}")).unwrap(),
             Type::Bytes(size) => TokenStream::from_str(&format!("[u8; {size}]")).unwrap(),
             Type::DynamicBytes => quote!(Vec<u8>),
-            Type::Variable(name) => TokenStream::from_str(&format_expression(name)).unwrap(),
+            Type::Variable(name) => {
+                TokenStream::from_str(&format_expression(name, Pascal)).unwrap()
+            }
             Type::Mapping(keys, value) => {
                 if keys.len() == 1 {
                     let key = &keys[0];
@@ -1129,14 +1148,14 @@ impl ToTokens for Statement {
             }
             Statement::Emit(expression) => {
                 match expression {
-                    Expression::FunctionCall(identifier, args) 
-                    if let Expression::Variable(event_name,_)=*identifier.clone()=> {
+                    Expression::FunctionCall(identifier, args)
+                    if let Expression::Variable(event_name,_,location)=*identifier.clone()=> {
                         let fn_name = TokenStream::from_str(&format!(
                             "_emit_{}",
                             &event_name.to_case(Snake)
                         ))
                         .unwrap();
-                        quote!( self. #fn_name ( #(#args),* ); )
+                        quote!( #location . #fn_name ( #(#args),* ); )
                     }
                     _ => unreachable!("Emit can be only function call"),
                 }
@@ -1153,20 +1172,28 @@ impl ToTokens for Statement {
                 )
             }
             Statement::If(condition, if_true, if_false) => {
-                let else_block = if let Some(statement) = if_false {
-                    quote!(else {#statement})
-                } else {
-                    quote!()
-                };
-                quote!(
-                    if #condition {
+                match if_false {
+                    Some(statement) => {
+                        match *statement.clone() {
+                            Statement::If(..)=> quote!(
+                                if #condition {
+                                    #if_true
+                                } else #if_false
+                            ),
+                            _ => quote!(if #condition {
+                                #if_true
+                            }else { #if_false}
+                        )
+                        }
+                    },
+                    None => quote!(if #condition {
                         #if_true
-                    }
-                    #else_block
-                )
+                    }),
+                }
             }
             Statement::Return(expression) => quote!(return Ok(#expression)),
-            Statement::Revert(_, _) => todo!(),
+            Statement::Revert(reason, _) => {
+                quote!( return Err( Error::Custom(String::from(#reason) )) )},
             Statement::RevertNamedArgs => todo!(),
             Statement::Try(expression) => {
                 quote!(
@@ -1177,9 +1204,9 @@ impl ToTokens for Statement {
             }
             Statement::UncheckedBlock(statements) => {
                 quote!(
-                    _comment_!("Please handle unchecked blocks manually >>>");
+                    // _comment_!("Please handle unchecked blocks manually >>>");
                     #(#statements)*
-                    _comment_!("<<< Please handle unchecked blocks manually");
+                    // _comment_!("<<< Please handle unchecked blocks manually");
                 )
             }
             Statement::VariableDefinition(definition, initial_value) => {
@@ -1203,57 +1230,120 @@ impl ToTokens for Statement {
 impl ToTokens for Expression {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(match self {
+            Expression::Add(left, right) => quote!( #left + #right),
             Expression::ArraySubscript(expression, index) => {
                 quote!( #expression [ #index ])
             }
             Expression::Assign(variable, value) => {
                 match *variable.clone() {
                     Expression::MappingSubscript(mapping, indices) => {
-                        // means assigning to mapping
-                        match *value.clone() {
-                            Expression::Subtract(_, _) => quote! (#mapping .insert(&(#(#indices),*), & (#value)) ),
-                            _ => quote! (#mapping .insert(&(#(#indices),*), & #value) )
-                        }
+                        quote! (#mapping .insert(&(#(#indices),*), & #value) )
                     }
-                    _ => quote!( #variable = #value )
+                    _ => quote!( #variable = #value ),
                 }
             }
             Expression::AssignAdd(variable, value) => {
                 match *variable.clone() {
                     Expression::MappingSubscript(mapping, indices) => {
-                        // means assigning to mapping
                         quote! (
-                            let new_value = #mapping .get(&(#(#indices),*)).unwrap_or_default();
-                            #mapping .insert(&(#(#indices),*), & new_value) 
+                            let new_value = #mapping .get(&( #(#indices),* )).unwrap_or_default() + #value;
+                            #mapping .insert(&(#(#indices),*), & new_value)
                         )
                     }
-                    _ => quote!( #variable += #value )
+                    _ => quote!( #variable += #value ),
                 }
+            }
+            Expression::AssignDivide(variable, value) => {
+                match *variable.clone() {
+                    Expression::MappingSubscript(mapping, indices) => {
+                        quote! (
+                            let new_value = #mapping .get(&(#(#indices),*)).unwrap_or_default() / #value;
+                            #mapping .insert(&(#(#indices),*), & new_value)
+                        )
+                    }
+                    _ => quote!( #variable /= #value ),
+                }
+            }
+            Expression::AssignModulo(variable, value) => {
+                match *variable.clone() {
+                    Expression::MappingSubscript(mapping, indices) => {
+                        quote! (
+                            let new_value = #mapping .get(&(#(#indices),*)).unwrap_or_default() % #value;
+                            #mapping .insert(&(#(#indices),*), & new_value)
+                        )
+                    }
+                    _ => quote!( #variable %= #value ),
+                }
+            }
+            Expression::AssignMultiply(variable, value) => {
+                match *variable.clone() {
+                    Expression::MappingSubscript(mapping, indices) => {
+                        quote! (
+                            let new_value = #mapping .get(&(#(#indices),*)).unwrap_or_default() * #value;
+                            #mapping .insert(&(#(#indices),*), & new_value)
+                        )
+                    }
+                    _ => quote!( #variable *= #value ),
+                }
+            }
+            Expression::AssignSubtract(variable, value) => {
+                match *variable.clone() {
+                    Expression::MappingSubscript(mapping, indices) => {
+                        quote! (
+                            let new_value = #mapping .get(&(#(#indices),*)).unwrap_or_default() - #value;
+                            #mapping .insert(&(#(#indices),*), & new_value)
+                        )
+                    }
+                    _ => quote!( #variable -= #value ),
+                }
+            }
+            Expression::BoolLiteral(value) => {
+                quote!(#value)
+            }
+            Expression::Delete(expression) => {
+                match *expression.clone() {
+                    Expression::MappingSubscript(mapping, indices) => {
+                        quote! (#mapping .remove(&(#(#indices),*)) )
+                    }
+                    _ => quote!(_comment_!("Deletion of storage member")),
+                }
+            }
+            Expression::Divide(left, right) => quote!( #left / #right ),
+            Expression::Equal(left, right) => {
+                quote!(
+                    #left == #right
+                )
             }
             Expression::FunctionCall(function, args) => {
                 match *function.clone() {
-                    Expression::Variable(name,_) if name == "require" =>{
+                    Expression::Variable(name, ..) if name == "require" => {
                         let condition = &args[0];
-                        if args.len()> 1 {
+                        if args.len() > 1 {
                             let error = &args[1];
-                            quote!( 
-                                if ! (#condition) { 
-                                    return Err(Error::Custom( String::from( #error) )) 
-                                } 
-                            )
-                        }else {
-                            quote!( 
-                                if ! (#condition) { 
-                                    return Err(Error::Custom( String::from("No error message provdided :)") )) 
-                                } 
+                            match error {
+                                Expression::Variable(..) => {
+                                    quote!(
+                                        if ! (#condition) {
+                                            return Err(Error::Custom( #error ))
+                                        }
+                                    )
+                                }
+                                _ => {
+                                    quote!(
+                                        if ! (#condition) {
+                                            return Err(Error::Custom( String::from( #error) ))
+                                        }
+                                    )
+                                }
+                            }
+                        } else {
+                            quote!(
+                                if ! (#condition)   {
+                                    return Err(Error::Custom( String::from("No error message provdided :)") ))
+                                }
                             )
                         }
-                    } ,
-                    Expression::Variable(name,_) if name == "type" =>{
-                        quote!(
-                            type_of ( #(#args,)* )?
-                        )
-                    } ,
+                    }
                     Expression::Type(ty) if let Type::AccountId = *ty.clone() => {
                         if args.len() > 1 {
                             unreachable!("Multiple parameters were provided to `address` call")
@@ -1261,39 +1351,54 @@ impl ToTokens for Expression {
                         let account_id = &args[0];
                         match account_id {
                             Expression::NumberLiteral(number) if number == "0" => {
-                                quote!( ZERO_ADDRESS.into() )
+                                quote!(ZERO_ADDRESS.into())
                             }
-                            _ => quote!( AccountId::from(#account_id) )
+                            _ => quote!( AccountId::from(#account_id) ),
                         }
                     }
-                    _ => quote!(
-                        #function ( #(#args,)* )?
-                    )
+                    Expression::Type(ty) => {
+                        match *ty {
+                            Type::DynamicBytes => quote!( Vec::<u8>::from ( #(#args),* ) ),
+                            _ => quote!( #ty :: from ( #(#args),* ) ),
+                        }
+                    }
+                    Expression::Variable(name, ..) if name == "type" => {
+                        quote!(
+                            type_of ( #(#args),* )?
+                        )
+                    }
+                    _ => {
+                        quote!(
+                            #function ( #(#args),* )?
+                        )
+                    }
                 }
             }
-            Expression::Equal(left, right) => {
-                quote!(
-                    #left == #right
-                )
-            }
             Expression::Less(left, right) => {
-                quote!(
-                    #left < #right
-                )
+                quote!( #left < #right )
             }
+            Expression::LessEqual(left, right) => {
+                quote!( #left <= #right )
+            }
+            Expression::List(list) => quote!( (#(#list),*) ),
             Expression::MappingSubscript(array, indices) => {
                 if indices.len() > 1 {
                     quote! (#array.get(&(#(#indices),*)).unwrap_or_default())
-                }else {
+                } else {
                     quote! (#array.get(&#(#indices),*).unwrap_or_default())
                 }
-            },
+            }
             Expression::MemberAccess(left, member) => {
                 match *left.clone() {
-                    Expression::Variable(name, _) if name == "msg" => {
+                    Expression::Variable(name, _,location) if name == "msg" => {
+                        let location = match location {
+                            VariableAccessLocation::Constructor => quote!(instance.),
+                            VariableAccessLocation::Modifier => quote!(T::),
+                            VariableAccessLocation::Any => quote!(Self::),
+                        };
                         match member.as_str() {
-                            "sender" => quote!( Self::env().caller() ),
-                            _ => panic!("msg.{member} is not implemented!")
+                            "sender" => quote!(#location env().caller()),
+                            _ => panic!("msg.{member} is not implemented!"),
                         }
                     }
                     _ => {
@@ -1302,11 +1407,19 @@ impl ToTokens for Expression {
                     }
                 }
             }
-            Expression::MoreEqual(left, right) => {
-                quote!(
-                    #left >= #right
-                )
+            Expression::Modifier(name,args) => {
+                let parsed_name = TokenStream::from_str( &format_expression(name, Snake)).unwrap();
+                quote!( #[modifiers( #parsed_name ( #(#args),* ) )] )
             }
+            Expression::ModifierBody => { quote!( body(instance) ) }
+            Expression::Modulo(left, right) => quote!( #left % #right ),
+            Expression::More(left, right) => {
+                quote!( #left > #right )
+            }
+            Expression::MoreEqual(left, right) => {
+                quote!( #left >= #right )
+            }
+            Expression::Multiply(left, right) => quote!( #left * #right ),
             Expression::New(new) => {
                 match *new.clone() {
                     // new array
@@ -1318,18 +1431,20 @@ impl ToTokens for Expression {
                     _ => todo!(),
                 }
             }
+            Expression::Not(expression) => {
+                quote!( ! #expression )
+            }
             Expression::NotEqual(left, right) => {
-                quote!(
-                    #left != #right
-                )
+                quote!( #left != #right )
             }
-            Expression::NumberLiteral(value) => {
-                TokenStream::from_str(value).unwrap()
-            }
+            Expression::NumberLiteral(value) => TokenStream::from_str(value).unwrap(),
             Expression::Or(left, right) => {
                 quote!(
-                    #left || #right
+                   #left || #right
                 )
+            }
+            Expression::Parenthesis(expression) => {
+                quote! ( (#expression) )
             }
             Expression::PostDecrement(expression) => {
                 quote!(
@@ -1341,6 +1456,7 @@ impl ToTokens for Expression {
                     #expression += 1
                 )
             }
+            Expression::Power(left, right) => quote!( #left .pow( #right ) ),
             Expression::PreDecrement(expression) => {
                 quote!(
                     #expression -= 1
@@ -1360,19 +1476,126 @@ impl ToTokens for Expression {
                     #left - #right
                 )
             }
+            Expression::Ternary(condition, if_true, if_false) => {
+                quote!( if #condition { #if_true } else { #if_false } )
+            }
             Expression::Type(ty) => quote!( #ty ),
-            Expression::Variable(name,member_type) => {
+            Expression::Variable(name, member_type,location) => {
                 match member_type {
-                    MemberType::Variable => TokenStream::from_str(&format!("{}{}","self.data().",name.to_case(Snake))).unwrap(),
-                    MemberType::Function => TokenStream::from_str(&format!("{}{}","self.",name.to_case(Snake))).unwrap(),
-                    MemberType::FunctionPrivate => TokenStream::from_str(&format!("{}_{}","self.",name.to_case(Snake))).unwrap(),
-                    MemberType::None => TokenStream::from_str(&name.to_case(Snake)).unwrap(),
+                    MemberType::Variable(_) => {
+                        let formatted_name =TokenStream::from_str(&format_expression( name,Snake))
+                            .unwrap();
+                        quote!(#location.data(). #formatted_name)
+                    }
+                    MemberType::Function => {
+                        let formatted_name =TokenStream::from_str(&format_expression(name,Snake))
+                            .unwrap();
+                        quote!(#location.#formatted_name)
+                    }
+                    MemberType::FunctionPrivate => {
+                        let formatted_name =TokenStream::from_str(&format!("_{}", name.to_case(Snake)))
+                            .unwrap();
+                        quote!(#location.#formatted_name)
+                    }
+                    MemberType::Constant => {
+                        TokenStream::from_str(&format_expression(name, UpperSnake)).unwrap()
+                    }
+                    MemberType::None(_) => TokenStream::from_str(&format_expression(name, Snake)).unwrap(),
                 }
-            },
+            }
             Expression::VariableDeclaration(ty, name) => {
                 let name = TokenStream::from_str(name).unwrap();
                 quote!(let mut #name : #ty)
             }
+            Expression::ShiftLeft(left, right) => {
+                quote!(
+                   #left << #right
+                )
+            }
+            Expression::ShiftRight(left, right) => {
+                quote!(
+                   #left >> #right
+                )
+            }
+            Expression::BitwiseAnd(left, right) => {
+                quote!(
+                   #left & #right
+                )
+            }
+            Expression::BitwiseXor(left, right) => {
+                quote!(
+                   #left ^ #right
+                )
+            }
+            Expression::BitwiseOr(left, right) => {
+                quote!(
+                   #left | #right
+                )
+            }
+            Expression::AssignOr(left, right) => {
+                quote!(
+                   #left |= #right
+                )
+            }
+            Expression::AssignAnd(left, right) => {
+                quote!(
+                   #left &= #right
+                )
+            }
+            Expression::AssignXor(left, right) => {
+                quote!(
+                   #left ^= #right
+                )
+            }
+            Expression::AssignShiftLeft(left, right) => {
+                quote!(
+                   #left <<= #right
+                )
+            }
+            Expression::AssignShiftRight(left, right) => {
+                quote!(
+                   #left >>= #right
+                )
+            }
+            Expression::HexLiteral(hex) => {
+                quote!( &hex::decode(#hex) )
+            }
+            Expression::NamedFunctionCall(function, args) => {
+                let names = args
+                    .iter()
+                    .map(|arg| {
+                        let parsed = format_expression(&arg.0, Snake);
+                        format_ident!("{parsed}")
+                    })
+                    .collect::<Vec<_>>();
+                let values = args.iter().map(|arg| &arg.1).collect::<Vec<_>>();
+                quote!( #function { #( #names : #values ),*  } )
+            }
+            Expression::And(left, right) => {
+                quote!(
+                   #left && #right
+                )
+            }
+            _ => quote!(),
         })
+    }
+}
+
+impl ToTokens for VariableAccessLocation {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(match self {
+            VariableAccessLocation::Constructor => quote!(instance),
+            VariableAccessLocation::Modifier => quote!(instance),
+            VariableAccessLocation::Any => quote!(self),
+        })
+    }
+}
+
+impl ToTokens for FunctionParam {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let name =
+            TokenStream::from_str(&format!("__{}", format_expression(&self.name, Snake))).unwrap();
+        let ty = &self.param_type;
+        tokens.extend(quote!(#name : #ty ))
     }
 }

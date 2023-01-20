@@ -103,17 +103,20 @@ pub enum Node {
 
 pub struct Parser<'a> {
     members_map: &'a mut HashMap<String, MemberType>,
+    modifiers_map: &'a mut HashMap<String, FunctionDefinition>,
     pub rb_tree: &'a mut RBTree<usize, Node>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(
-        fields_map: &'a mut HashMap<String, MemberType>,
+        members_map: &'a mut HashMap<String, MemberType>,
         rb_tree: &'a mut RBTree<usize, Node>,
+        modifiers_map: &'a mut HashMap<String, FunctionDefinition>,
     ) -> Self {
         Parser {
-            members_map: fields_map,
+            members_map,
             rb_tree,
+            modifiers_map,
         }
     }
 
@@ -141,8 +144,7 @@ impl<'a> Parser<'a> {
                 SourceUnitPart::ContractDefinition(contract) => {
                     output.push(self.handle_contract_definition(contract)?);
                 }
-                SourceUnitPart::ImportDirective(_) => println!("import"),
-                SourceUnitPart::PragmaDirective(..) => {}
+                SourceUnitPart::ImportDirective(_) | SourceUnitPart::PragmaDirective(..) => {}
                 _ => println!("Found a source unit outside of contract"),
             }
         }
@@ -155,12 +157,7 @@ impl<'a> Parser<'a> {
         contract_definition: &ContractDefinition,
     ) -> Result<ParserOutput, ParserError> {
         match contract_definition.ty {
-            ContractTy::Abstract(_) => {
-                unimplemented!(
-                    "Abstract contract can not be instantiated so we only create impl and trait for it"
-                )
-            }
-            ContractTy::Contract(loc) => {
+            ContractTy::Abstract(loc) | ContractTy::Contract(loc) => {
                 self.rb_tree.insert(
                     loc.start(),
                     Node::ContractDefinition(contract_definition.clone()),
@@ -209,8 +206,15 @@ impl<'a> Parser<'a> {
             match part {
                 ContractPart::VariableDefinition(variable_definition) => {
                     let parsed_field = self.parse_storage_field(variable_definition)?;
-                    self.members_map
-                        .insert(parsed_field.name.clone(), MemberType::Variable);
+                    let constant = parsed_field.constant;
+                    self.members_map.insert(
+                        parsed_field.name.clone(),
+                        if constant {
+                            MemberType::Constant
+                        } else {
+                            MemberType::Variable(Box::new(parsed_field.field_type.clone()))
+                        },
+                    );
                     fields.push(parsed_field);
                 }
                 ContractPart::FunctionDefinition(function_definition) => {
@@ -222,14 +226,23 @@ impl<'a> Parser<'a> {
                                 | FunctionAttribute::Visibility(Visibility::Public(_))
                         )
                     });
-                    self.members_map.insert(
-                        fn_name.clone(),
-                        if external {
-                            MemberType::Function
-                        } else {
-                            MemberType::FunctionPrivate
-                        },
-                    );
+                    match function_definition.ty {
+                        FunctionTy::Function => {
+                            self.members_map.insert(
+                                fn_name.clone(),
+                                if external {
+                                    MemberType::Function
+                                } else {
+                                    MemberType::FunctionPrivate
+                                },
+                            );
+                        }
+                        FunctionTy::Modifier => {
+                            self.modifiers_map
+                                .insert(fn_name.clone(), *function_definition.clone());
+                        }
+                        _ => (),
+                    }
                 }
                 _ => (),
             }
@@ -255,7 +268,9 @@ impl<'a> Parser<'a> {
                     let parsed_function = self.parse_function(function_definition)?;
                     match function_definition.ty {
                         FunctionTy::Constructor => constructor = parsed_function,
-                        FunctionTy::Modifier => modifiers.push(parsed_function),
+                        FunctionTy::Modifier => {
+                            modifiers.push(parsed_function);
+                        }
                         _ => functions.push(parsed_function),
                     }
                 }
@@ -274,6 +289,7 @@ impl<'a> Parser<'a> {
             fields,
             functions,
             constructor,
+            modifiers,
             ..Default::default()
         })
     }
@@ -342,26 +358,23 @@ impl<'a> Parser<'a> {
 
         // first we register all members of the contract
         for part in contract_definition.parts.iter() {
-            match part {
-                ContractPart::FunctionDefinition(function_definition) => {
-                    let fn_name = self.parse_identifier(&function_definition.name);
-                    let external = function_definition.attributes.iter().any(|attribute| {
-                        matches!(
-                            attribute,
-                            FunctionAttribute::Visibility(Visibility::External(_))
-                                | FunctionAttribute::Visibility(Visibility::Public(_))
-                        )
-                    });
-                    self.members_map.insert(
-                        fn_name.clone(),
-                        if external {
-                            MemberType::Function
-                        } else {
-                            MemberType::FunctionPrivate
-                        },
-                    );
-                }
-                _ => (),
+            if let ContractPart::FunctionDefinition(function_definition) = part {
+                let fn_name = self.parse_identifier(&function_definition.name);
+                let external = function_definition.attributes.iter().any(|attribute| {
+                    matches!(
+                        attribute,
+                        FunctionAttribute::Visibility(Visibility::External(_))
+                            | FunctionAttribute::Visibility(Visibility::Public(_))
+                    )
+                });
+                self.members_map.insert(
+                    fn_name.clone(),
+                    if external {
+                        MemberType::Function
+                    } else {
+                        MemberType::FunctionPrivate
+                    },
+                );
             }
         }
 
@@ -392,8 +405,10 @@ impl<'a> Parser<'a> {
                 ContractPart::StraySemicolon(_) => {}
                 ContractPart::VariableDefinition(variable_definition) => {
                     let parsed_field = self.parse_storage_field(variable_definition)?;
-                    self.members_map
-                        .insert(parsed_field.name.clone(), MemberType::Variable);
+                    self.members_map.insert(
+                        parsed_field.name.clone(),
+                        MemberType::Variable(Box::new(parsed_field.field_type.clone())),
+                    );
                     fields.push(parsed_field);
                 }
             }
@@ -428,9 +443,13 @@ impl<'a> Parser<'a> {
                     variable_declaration.loc.start(),
                     Node::VariableDeclaration(variable_declaration.clone()),
                 );
+                let name = self.parse_identifier(&variable_declaration.name);
+                let ty = self.parse_type(&variable_declaration.ty).ok()?;
+                self.members_map
+                    .insert(name.clone(), MemberType::None(Box::new(ty.clone())));
                 Some(StructField {
-                    name: self.parse_identifier(&variable_declaration.name),
-                    field_type: self.parse_type(&variable_declaration.ty).ok()?,
+                    name,
+                    field_type: ty,
                     comments: Default::default(),
                 })
             })
@@ -479,7 +498,7 @@ impl<'a> Parser<'a> {
         );
         let name = self.parse_identifier(&enum_definition.name);
 
-        let values: Vec<EnumField> = enum_definition
+        let values: Vec<EnumValue> = event_definition
             .values
             .iter()
             .map(|enum_value| {
@@ -525,7 +544,9 @@ impl<'a> Parser<'a> {
                     | VariableAttribute::Visibility(Visibility::Public(_))
             )
         });
-        let initial_value = None; // TODO
+        let initial_value = variable_definition.initializer.as_ref().map(|expression| {
+            self.parse_expression(expression, VariableAccessLocation::Constructor)
+        });
         let comments = Vec::default();
         Ok(ContractField {
             field_type,
@@ -542,28 +563,46 @@ impl<'a> Parser<'a> {
         function_definition: &FunctionDefinition,
     ) -> Result<Function, ParserError> {
         let header = self.parse_function_header(function_definition);
-
-        // TODO
-        let _modifiers = function_definition
-            .attributes
-            .iter()
-            .filter(|&attribute| matches!(attribute, FunctionAttribute::BaseOrModifier(..)))
-            .map(|modifier| {
-                if let FunctionAttribute::BaseOrModifier(_, base) = modifier {
-                    let _name = self.parse_identifier_path(&base.name);
-                    // TODO
-                } else {
-                    unreachable!("The vec was filtered before");
+        let mut invalid_modifiers = HashMap::new();
+        for modifier in header.invalid_modifiers.clone() {
+            match modifier {
+                Expression::InvalidModifier(name, _) => {
+                    if let Some(function) = self.modifiers_map.get(&name) {
+                        invalid_modifiers.insert(
+                            (header.name.clone(), name),
+                            Function {
+                                header: self.parse_function_header(function),
+                                body: if let Some(body) = &function.body {
+                                    Some(self.parse_statement(
+                                        body,
+                                        self.parse_variable_access_location(function_definition),
+                                    )?)
+                                } else {
+                                    None
+                                },
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
-            });
+                _ => unreachable!("Only invalid modifiers are allowed here"),
+            }
+        }
 
         let body = if let Some(statement) = &function_definition.body {
-            Some(self.parse_statement(statement)?)
+            Some(self.parse_statement(
+                statement,
+                self.parse_variable_access_location(function_definition),
+            )?)
         } else {
             None
         };
 
-        Ok(Function { header, body })
+        Ok(Function {
+            header,
+            body,
+            invalid_modifiers,
+        })
     }
 
     fn parse_function_header(
@@ -584,6 +623,38 @@ impl<'a> Parser<'a> {
                 let param_type = self.parse_type(&param.ty).ok()?;
                 Some(FunctionParam { name, param_type })
             })
+            .collect();
+        let all_modifiers: Vec<Expression> = function_definition
+            .attributes
+            .iter()
+            .filter(|&attribute| matches!(attribute, FunctionAttribute::BaseOrModifier(..)))
+            .map(|modifier| {
+                if let FunctionAttribute::BaseOrModifier(_, base) = modifier {
+                    let parsed_name = self.parse_identifier_path(&base.name);
+                    let parsed_args = if let Some(args) = &base.args {
+                        self.parse_expression_vec(args, VariableAccessLocation::Any)
+                    } else {
+                        Vec::default()
+                    };
+                    if parsed_args.iter().any(function_call_in_expression) {
+                        Expression::InvalidModifier(parsed_name, parsed_args)
+                    } else {
+                        Expression::Modifier(parsed_name, parsed_args)
+                    }
+                } else {
+                    unreachable!("The vec was filtered before");
+                }
+            })
+            .collect();
+        let modifiers = all_modifiers
+            .iter()
+            .filter(|expression| matches!(expression, Expression::Modifier(..)))
+            .cloned()
+            .collect();
+        let invalid_modifiers = all_modifiers
+            .iter()
+            .filter(|expression| matches!(expression, Expression::InvalidModifier(..)))
+            .cloned()
             .collect();
         let external = function_definition.attributes.iter().any(|attribute| {
             matches!(
@@ -623,12 +694,29 @@ impl<'a> Parser<'a> {
             view,
             payable,
             return_params,
+            modifiers,
+            invalid_modifiers,
             ..Default::default()
         }
     }
 
-    fn parse_statement(&mut self, statement: &SolangStatement) -> Result<Statement, ParserError> {
-        let (result, location) = match statement {
+    fn parse_variable_access_location(
+        &self,
+        function_definition: &FunctionDefinition,
+    ) -> VariableAccessLocation {
+        match function_definition.ty {
+            FunctionTy::Constructor => VariableAccessLocation::Constructor,
+            FunctionTy::Modifier => VariableAccessLocation::Modifier,
+            _ => VariableAccessLocation::Any,
+        }
+    }
+
+    fn parse_statement(
+        &self,
+        statement: &SolangStatement,
+        location: VariableAccessLocation,
+    ) -> Result<Statement, ParserError> {
+        let (result, result_location) = match statement {
             SolangStatement::Block {
                 loc,
                 unchecked,
@@ -636,7 +724,7 @@ impl<'a> Parser<'a> {
             } => {
                 let parsed_statements = statements
                     .iter()
-                    .map(|statement| self.parse_statement(statement))
+                    .map(|statement| self.parse_statement(statement, location.clone()))
                     .map(|result| result.unwrap())
                     .collect::<Vec<_>>();
                 if *unchecked {
@@ -659,31 +747,31 @@ impl<'a> Parser<'a> {
                 todo!()
             }
             SolangStatement::If(loc, expression, if_true, if_false) => {
-                let parsed_expression = self.parse_expression(expression);
-                let parsed_if_true = Box::new(self.parse_statement(if_true)?);
+                let parsed_expression = self.parse_expression(expression, location.clone());
+                let parsed_if_true = Box::new(self.parse_statement(if_true, location.clone())?);
                 let parsed_if_false = if_false
                     .as_ref()
-                    .map(|statement| self.parse_statement(statement))
+                    .map(|statement| self.parse_statement(statement, location.clone()))
                     .map(|result| Box::new(result.unwrap()));
                 (
                     Statement::If(parsed_expression, parsed_if_true, parsed_if_false),
                     loc,
                 )
             }
-            SolangStatement::While(loc, expression, solang_statement) => {
-                let parsed_expression = self.parse_expression(expression);
-                let parsed_statement = Box::new(self.parse_statement(solang_statement)?);
+            SolangStatement::While(_, expression, statement) => {
+                let parsed_expression = self.parse_expression(expression, location.clone());
+                let parsed_statement = Box::new(self.parse_statement(statement, location)?);
                 (Statement::While(parsed_expression, parsed_statement), loc)
             }
             SolangStatement::Expression(loc, expression) => {
-                let parsed_expression = self.parse_expression(expression);
+                let parsed_expression = self.parse_expression(expression, location);
                 (Statement::Expression(parsed_expression), loc)
             }
             SolangStatement::VariableDefinition(loc, declaration, initial_value_maybe) => {
                 let parsed_declaration = self.parse_variable_declaration(declaration)?;
                 let parsed_initial_value = initial_value_maybe
                     .as_ref()
-                    .map(|expression| self.parse_expression(expression));
+                    .map(|expression| self.parse_expression(expression, location));
                 (
                     Statement::VariableDefinition(parsed_declaration, parsed_initial_value),
                     loc,
@@ -692,18 +780,18 @@ impl<'a> Parser<'a> {
             SolangStatement::For(loc, variable_definition, condition, on_pass, body) => {
                 let parsed_variable_definition = variable_definition
                     .as_ref()
-                    .map(|statement| self.parse_statement(statement))
+                    .map(|statement| self.parse_statement(statement, location.clone()))
                     .map(|result| Box::new(result.unwrap()));
                 let parsed_condition = condition
                     .as_ref()
-                    .map(|expression| self.parse_expression(expression));
+                    .map(|expression| self.parse_expression(expression, location.clone()));
                 let parsed_on_pass = on_pass
                     .as_ref()
-                    .map(|statement| self.parse_statement(statement))
+                    .map(|statement| self.parse_statement(statement, location.clone()))
                     .map(|result| Box::new(result.unwrap()));
                 let parsed_body = body
                     .as_ref()
-                    .map(|statement| self.parse_statement(statement))
+                    .map(|statement| self.parse_statement(statement, location))
                     .map(|result| Box::new(result.unwrap()));
                 (
                     Statement::For(
@@ -716,8 +804,8 @@ impl<'a> Parser<'a> {
                 )
             }
             SolangStatement::DoWhile(loc, body, condition) => {
-                let parsed_condition = self.parse_expression(condition);
-                let parsed_body = Box::new(self.parse_statement(body)?);
+                let parsed_condition = self.parse_expression(condition, location.clone());
+                let parsed_body = Box::new(self.parse_statement(body, location)?);
                 (Statement::DoWhile(parsed_body, parsed_condition), loc)
             }
             SolangStatement::Continue(loc) => (Statement::Continue, loc),
@@ -725,7 +813,7 @@ impl<'a> Parser<'a> {
             SolangStatement::Return(loc, expression) => {
                 let parsed_expression = expression
                     .as_ref()
-                    .map(|expression| self.parse_expression(expression));
+                    .map(|expression| self.parse_expression(expression, location));
                 (Statement::Return(parsed_expression), loc)
             }
             SolangStatement::Revert(loc, identifier_path, args) => {
@@ -733,18 +821,16 @@ impl<'a> Parser<'a> {
                     .as_ref()
                     .map(|identifier_path| self.parse_identifier_path(identifier_path))
                     .unwrap_or(String::from("_"));
-                let parsed_args = self.parse_expression_vec(args);
+                let parsed_args = self.parse_expression_vec(args, location);
                 (Statement::Revert(identifier_path, parsed_args), loc)
             }
-            SolangStatement::RevertNamedArgs(_, _, _) => {
-                todo!()
-            }
+            SolangStatement::RevertNamedArgs(_, _, _) => todo!(),
             SolangStatement::Emit(loc, expression) => {
-                let parsed_expression = self.parse_expression(expression);
+                let parsed_expression = self.parse_expression(expression, location);
                 (Statement::Emit(parsed_expression), loc)
             }
             SolangStatement::Try(loc, expression, _, _) => {
-                let parsed_expression = self.parse_expression(expression);
+                let parsed_expression = self.parse_expression(expression, location);
                 (Statement::Try(parsed_expression), loc)
             }
             SolangStatement::Error(_) => {
@@ -752,7 +838,7 @@ impl<'a> Parser<'a> {
             }
         };
         self.rb_tree
-            .insert(location.start(), Node::SolangStatement(statement.clone()));
+            .insert(result_location.start(), Node::SolangStatement(statement.clone()));
         Ok(result)
     }
 
@@ -771,18 +857,22 @@ impl<'a> Parser<'a> {
         Ok(Expression::VariableDeclaration(parsed_type, parsed_name))
     }
 
-    fn parse_expression(&self, expression: &SolangExpression) -> Expression {
+    fn parse_expression(
+        &self,
+        expression: &SolangExpression,
+        location: VariableAccessLocation,
+    ) -> Expression {
         macro_rules! maybe_boxed_expression {
             ($to_declare:ident,$to_parse:expr) => {
-                let $to_declare = $to_parse
-                    .as_ref()
-                    .map(|expression| Box::new(self.parse_expression(&expression)));
+                let $to_declare = $to_parse.as_ref().map(|expression| {
+                    Box::new(self.parse_expression(&expression, location.clone()))
+                });
             };
         }
 
         macro_rules! boxed_expression {
             ($to_declare:ident,$to_parse:expr) => {
-                let $to_declare = Box::new(self.parse_expression($to_parse));
+                let $to_declare = Box::new(self.parse_expression($to_parse, location.clone()));
             };
         }
 
@@ -802,23 +892,66 @@ impl<'a> Parser<'a> {
             SolangExpression::ArraySubscript(_, array, index_maybe) => {
                 match *array.clone() {
                     SolangExpression::ArraySubscript(..) => {
-                        let mut parsed_indices = VecDeque::default();
-                        parsed_indices.push_back(
-                            self.parse_expression(&index_maybe.as_ref().unwrap().clone()),
-                        );
-                        let mut array_now = array.clone();
-                        while let SolangExpression::ArraySubscript(_, array, index_maybe) =
-                            *array_now.clone()
-                        {
-                            parsed_indices.push_back(self.parse_expression(&index_maybe.unwrap()));
-                            array_now = array.clone();
+                        self.array_subscript_to_mapping_subscript(array, index_maybe, location)
+                    }
+                    SolangExpression::MemberAccess(_, expression, _) => {
+                        let parsed_expresion = self.parse_expression(&expression, location.clone());
+                        match parsed_expresion {
+                            Expression::MappingSubscript(..) => {
+                                self.array_subscript_to_mapping_subscript(
+                                    array,
+                                    index_maybe,
+                                    location,
+                                )
+                            }
+                            _ => {
+                                boxed_expression!(parsed_array, array);
+                                maybe_boxed_expression!(parsed_index_maybe, index_maybe);
+                                Expression::ArraySubscript(parsed_array, parsed_index_maybe)
+                            }
                         }
-                        let mut vec_indices = Vec::default();
-                        while !parsed_indices.is_empty() {
-                            vec_indices.push(parsed_indices.pop_back().unwrap());
+                    }
+                    SolangExpression::Variable(identifier) => {
+                        let parsed_identifier = self.parse_identifier(&Some(identifier));
+                        match self.members_map.get(&parsed_identifier) {
+                            Some(ty) => {
+                                match ty {
+                                    MemberType::Variable(variable_type)
+                                    | MemberType::None(variable_type) => {
+                                        match *variable_type.clone() {
+                                            Type::Mapping(_, _) => {
+                                                self.array_subscript_to_mapping_subscript(
+                                                    array,
+                                                    index_maybe,
+                                                    location,
+                                                )
+                                            }
+                                            _ => {
+                                                boxed_expression!(parsed_array, array);
+                                                maybe_boxed_expression!(
+                                                    parsed_index_maybe,
+                                                    index_maybe
+                                                );
+                                                Expression::ArraySubscript(
+                                                    parsed_array,
+                                                    parsed_index_maybe,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        boxed_expression!(parsed_array, array);
+                                        maybe_boxed_expression!(parsed_index_maybe, index_maybe);
+                                        Expression::ArraySubscript(parsed_array, parsed_index_maybe)
+                                    }
+                                }
+                            }
+                            None => {
+                                boxed_expression!(parsed_array, array);
+                                maybe_boxed_expression!(parsed_index_maybe, index_maybe);
+                                Expression::ArraySubscript(parsed_array, parsed_index_maybe)
+                            }
                         }
-                        boxed_expression!(parsed_array, &array_now);
-                        Expression::MappingSubscript(parsed_array, vec_indices)
                     }
                     _ => {
                         boxed_expression!(parsed_array, array);
@@ -830,7 +963,10 @@ impl<'a> Parser<'a> {
             SolangExpression::ArraySlice(_, _, _, _) => {
                 todo!()
             }
-            SolangExpression::Parenthesis(_, _) => todo!(),
+            SolangExpression::Parenthesis(_, expression) => {
+                boxed_expression!(parsed_expression, expression);
+                Expression::Parenthesis(parsed_expression)
+            }
             SolangExpression::MemberAccess(_, expression, identifier) => {
                 boxed_expression!(parsed_expression, expression);
                 let parsed_identifier = self.parse_identifier(&Some(identifier.clone()));
@@ -838,14 +974,32 @@ impl<'a> Parser<'a> {
             }
             SolangExpression::FunctionCall(_, function, args) => {
                 boxed_expression!(parsed_function, function);
-                let parsed_args = self.parse_expression_vec(args);
+                let parsed_args = self.parse_expression_vec(args, location);
                 Expression::FunctionCall(parsed_function, parsed_args)
             }
             SolangExpression::FunctionCallBlock(_, _, _) => todo!(),
-            SolangExpression::NamedFunctionCall(_, _, _) => todo!(),
-            SolangExpression::Not(_, _) => todo!(),
+            SolangExpression::NamedFunctionCall(_, expression, arguments) => {
+                boxed_expression!(parsed_expression, expression);
+                let parsed_arguments = arguments
+                    .iter()
+                    .map(|argument| {
+                        let parsed_argument =
+                            self.parse_expression(&argument.expr, location.clone());
+                        let parsed_name = self.parse_identifier(&Some(argument.name.clone()));
+                        (parsed_name, parsed_argument)
+                    })
+                    .collect();
+                Expression::NamedFunctionCall(parsed_expression, parsed_arguments)
+            }
+            SolangExpression::Not(_, expression) => {
+                boxed_expression!(parsed_expression, expression);
+                Expression::Not(parsed_expression)
+            }
             SolangExpression::Complement(_, _) => todo!(),
-            SolangExpression::Delete(_, _) => todo!(),
+            SolangExpression::Delete(_, expression) => {
+                boxed_expression!(parsed_expression, expression);
+                Expression::Delete(parsed_expression)
+            }
             SolangExpression::PreIncrement(_, expression) => {
                 boxed_expression!(parsed_expression, expression);
                 Expression::PreIncrement(parsed_expression)
@@ -856,28 +1010,76 @@ impl<'a> Parser<'a> {
             }
             SolangExpression::UnaryPlus(_, _) => todo!(),
             SolangExpression::UnaryMinus(_, _) => todo!(),
-            SolangExpression::Power(_, _, _) => todo!(),
-            SolangExpression::Multiply(_, _, _) => todo!(),
-            SolangExpression::Divide(_, _, _) => todo!(),
-            SolangExpression::Modulo(_, _, _) => todo!(),
-            SolangExpression::Add(_, _, _) => todo!(),
+            SolangExpression::Power(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::Power(parsed_left, parsed_right)
+            }
+            SolangExpression::Multiply(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::Multiply(parsed_left, parsed_right)
+            }
+            SolangExpression::Divide(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::Divide(parsed_left, parsed_right)
+            }
+            SolangExpression::Modulo(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::Modulo(parsed_left, parsed_right)
+            }
+            SolangExpression::Add(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::Add(parsed_left, parsed_right)
+            }
             SolangExpression::Subtract(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
                 Expression::Subtract(parsed_left, parsed_right)
             }
-            SolangExpression::ShiftLeft(_, _, _) => todo!(),
-            SolangExpression::ShiftRight(_, _, _) => todo!(),
-            SolangExpression::BitwiseAnd(_, _, _) => todo!(),
-            SolangExpression::BitwiseXor(_, _, _) => todo!(),
-            SolangExpression::BitwiseOr(_, _, _) => todo!(),
+            SolangExpression::ShiftLeft(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::ShiftLeft(parsed_left, parsed_right)
+            }
+            SolangExpression::ShiftRight(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::ShiftRight(parsed_left, parsed_right)
+            }
+            SolangExpression::BitwiseAnd(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::BitwiseAnd(parsed_left, parsed_right)
+            }
+            SolangExpression::BitwiseXor(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::BitwiseXor(parsed_left, parsed_right)
+            }
+            SolangExpression::BitwiseOr(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::BitwiseOr(parsed_left, parsed_right)
+            }
             SolangExpression::Less(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
                 Expression::Less(parsed_left, parsed_right)
             }
-            SolangExpression::More(_, _, _) => todo!(),
-            SolangExpression::LessEqual(_, _, _) => todo!(),
+            SolangExpression::More(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::More(parsed_left, parsed_right)
+            }
+            SolangExpression::LessEqual(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::LessEqual(parsed_left, parsed_right)
+            }
             SolangExpression::MoreEqual(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
@@ -893,33 +1095,78 @@ impl<'a> Parser<'a> {
                 boxed_expression!(parsed_right, right);
                 Expression::NotEqual(parsed_left, parsed_right)
             }
-            SolangExpression::And(_, _, _) => todo!(),
+            SolangExpression::And(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::And(parsed_left, parsed_right)
+            }
             SolangExpression::Or(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
                 Expression::Or(parsed_left, parsed_right)
             }
-            SolangExpression::ConditionalOperator(_, _, _, _) => todo!(),
+            SolangExpression::ConditionalOperator(_, condition, if_true, if_false) => {
+                boxed_expression!(parsed_condition, condition);
+                boxed_expression!(parsed_if_true, if_true);
+                boxed_expression!(parsed_if_false, if_false);
+                Expression::Ternary(parsed_condition, parsed_if_true, parsed_if_false)
+            }
             SolangExpression::Assign(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
                 Expression::Assign(parsed_left, parsed_right)
             }
-            SolangExpression::AssignOr(_, _, _) => todo!(),
-            SolangExpression::AssignAnd(_, _, _) => todo!(),
-            SolangExpression::AssignXor(_, _, _) => todo!(),
-            SolangExpression::AssignShiftLeft(_, _, _) => todo!(),
-            SolangExpression::AssignShiftRight(_, _, _) => todo!(),
+            SolangExpression::AssignOr(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignOr(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignAnd(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignAnd(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignXor(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignXor(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignShiftLeft(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignShiftLeft(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignShiftRight(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignShiftRight(parsed_left, parsed_right)
+            }
             SolangExpression::AssignAdd(_, left, right) => {
                 boxed_expression!(parsed_left, left);
                 boxed_expression!(parsed_right, right);
                 Expression::AssignAdd(parsed_left, parsed_right)
             }
-            SolangExpression::AssignSubtract(_, _, _) => todo!(),
-            SolangExpression::AssignMultiply(_, _, _) => todo!(),
-            SolangExpression::AssignDivide(_, _, _) => todo!(),
-            SolangExpression::AssignModulo(_, _, _) => todo!(),
-            SolangExpression::BoolLiteral(_, _) => todo!(),
+            SolangExpression::AssignSubtract(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignSubtract(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignMultiply(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignMultiply(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignDivide(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignDivide(parsed_left, parsed_right)
+            }
+            SolangExpression::AssignModulo(_, left, right) => {
+                boxed_expression!(parsed_left, left);
+                boxed_expression!(parsed_right, right);
+                Expression::AssignModulo(parsed_left, parsed_right)
+            }
+            SolangExpression::BoolLiteral(_, value) => Expression::BoolLiteral(*value),
             SolangExpression::NumberLiteral(_, literal, b) => {
                 if !b.is_empty() {
                     println!("Number literal: B was {b}")
@@ -927,7 +1174,9 @@ impl<'a> Parser<'a> {
                 Expression::NumberLiteral(literal.clone())
             }
             SolangExpression::RationalNumberLiteral(_, _, _, _) => todo!(),
-            SolangExpression::HexNumberLiteral(_, _) => todo!(),
+            SolangExpression::HexNumberLiteral(_, hex_number) => {
+                Expression::HexLiteral(hex_number.clone())
+            }
             SolangExpression::StringLiteral(strings) => {
                 let parsed_strings = strings
                     .iter()
@@ -939,28 +1188,74 @@ impl<'a> Parser<'a> {
                 let parsed_type = Box::new(self.convert_solidity_type(solidity_type));
                 Expression::Type(parsed_type)
             }
-            SolangExpression::HexLiteral(_) => todo!(),
+            SolangExpression::HexLiteral(hex_vec) => {
+                let literal = hex_vec
+                    .iter()
+                    .map(|hex| hex.hex.clone())
+                    .collect::<Vec<_>>()
+                    .join("");
+                Expression::HexLiteral(literal)
+            }
             SolangExpression::AddressLiteral(_, _) => todo!(),
             SolangExpression::Variable(identifier) => {
                 let parsed_identifier = self.parse_identifier(&Some(identifier.clone()));
-                let member_type = self
-                    .members_map
-                    .get(&parsed_identifier)
-                    .unwrap_or(&MemberType::None);
-                Expression::Variable(parsed_identifier, member_type.clone())
+                if parsed_identifier == "_" {
+                    return Expression::ModifierBody
+                }
+                let none = MemberType::None(Box::new(Type::None));
+                let member_type = self.members_map.get(&parsed_identifier).unwrap_or(&none);
+                Expression::Variable(parsed_identifier, member_type.clone(), location)
             }
-            SolangExpression::List(_, _) => todo!(),
+            SolangExpression::List(_, parameters) => {
+                let list = parameters
+                    .iter()
+                    .map(|tuple| tuple.1.clone())
+                    .filter(|option| option.is_some())
+                    .map(|parameter| parameter.unwrap().ty)
+                    .map(|expression| self.parse_expression(&expression, location.clone()))
+                    .collect();
+                Expression::List(list)
+            }
             SolangExpression::ArrayLiteral(_, _) => todo!(),
             SolangExpression::Unit(_, _, _) => todo!(),
             SolangExpression::This(_) => todo!(),
         }
     }
 
-    fn parse_expression_vec(&self, expressions: &[SolangExpression]) -> Vec<Expression> {
+    fn parse_expression_vec(
+        &self,
+        expressions: &[SolangExpression],
+        location: VariableAccessLocation,
+    ) -> Vec<Expression> {
         expressions
             .iter()
-            .map(|expression| self.parse_expression(expression))
+            .map(|expression| self.parse_expression(expression, location.clone()))
             .collect()
+    }
+
+    fn array_subscript_to_mapping_subscript(
+        &self,
+        array: &SolangExpression,
+        index_maybe: &Option<Box<SolangExpression>>,
+        location: VariableAccessLocation,
+    ) -> Expression {
+        let mut parsed_indices = VecDeque::default();
+        parsed_indices.push_back(
+            self.parse_expression(&index_maybe.as_ref().unwrap().clone(), location.clone()),
+        );
+        let mut array_now = array.clone();
+        while let SolangExpression::ArraySubscript(_, array, index_maybe) = array_now {
+            parsed_indices
+                .push_back(self.parse_expression(&index_maybe.unwrap(), location.clone()));
+            array_now = *array.clone();
+        }
+        let mut vec_indices = Vec::default();
+        while !parsed_indices.is_empty() {
+            vec_indices.push(parsed_indices.pop_back().unwrap());
+        }
+
+        let parsed_array = Box::new(self.parse_expression(&array_now, location));
+        Expression::MappingSubscript(parsed_array, vec_indices)
     }
 
     fn parse_identifier_path(&self, identifier_path: &IdentifierPath) -> String {
@@ -1031,5 +1326,79 @@ impl<'a> Parser<'a> {
             Some(identifier) => identifier.name.clone(),
             None => String::from("_"),
         }
+    }
+}
+
+fn function_call_in_expression(expresion: &Expression) -> bool {
+    match expresion {
+        Expression::Add(expr1, expr2)
+        | Expression::And(expr1, expr2)
+        | Expression::Assign(expr1, expr2)
+        | Expression::AssignAdd(expr1, expr2)
+        | Expression::AssignDivide(expr1, expr2)
+        | Expression::AssignModulo(expr1, expr2)
+        | Expression::AssignMultiply(expr1, expr2)
+        | Expression::AssignSubtract(expr1, expr2)
+        | Expression::Divide(expr1, expr2)
+        | Expression::Equal(expr1, expr2)
+        | Expression::Less(expr1, expr2)
+        | Expression::LessEqual(expr1, expr2)
+        | Expression::Modulo(expr1, expr2)
+        | Expression::More(expr1, expr2)
+        | Expression::MoreEqual(expr1, expr2)
+        | Expression::Multiply(expr1, expr2)
+        | Expression::NotEqual(expr1, expr2)
+        | Expression::Or(expr1, expr2)
+        | Expression::Subtract(expr1, expr2)
+        | Expression::ShiftLeft(expr1, expr2)
+        | Expression::ShiftRight(expr1, expr2)
+        | Expression::BitwiseAnd(expr1, expr2)
+        | Expression::BitwiseXor(expr1, expr2)
+        | Expression::BitwiseOr(expr1, expr2)
+        | Expression::AssignOr(expr1, expr2)
+        | Expression::AssignAnd(expr1, expr2)
+        | Expression::AssignXor(expr1, expr2)
+        | Expression::AssignShiftLeft(expr1, expr2)
+        | Expression::AssignShiftRight(expr1, expr2)
+        | Expression::Power(expr1, expr2) => {
+            function_call_in_expression(expr1) || function_call_in_expression(expr2)
+        }
+        Expression::List(list) => {
+            list.iter()
+                .map(function_call_in_expression)
+                .any(|output| output)
+        }
+        Expression::MappingSubscript(expr, list) => {
+            list.iter()
+                .map(function_call_in_expression)
+                .any(|output| output)
+                || function_call_in_expression(expr)
+        }
+        Expression::ArraySubscript(expr1, expr2) => {
+            function_call_in_expression(expr1)
+                || expr2
+                    .as_ref()
+                    .map_or(false, |expression| function_call_in_expression(expression))
+        }
+        Expression::MemberAccess(expr, _) => function_call_in_expression(expr),
+        Expression::New(expr)
+        | Expression::Not(expr)
+        | Expression::Parenthesis(expr)
+        | Expression::PostDecrement(expr)
+        | Expression::PostIncrement(expr)
+        | Expression::PreDecrement(expr)
+        | Expression::PreIncrement(expr) => function_call_in_expression(expr),
+        Expression::Ternary(expr1, expr2, expr3) => {
+            function_call_in_expression(expr1)
+                || function_call_in_expression(expr2)
+                || function_call_in_expression(expr3)
+        }
+        Expression::NamedFunctionCall(..) | Expression::FunctionCall(..) => true,
+        Expression::Modifier(_, list) => {
+            list.iter()
+                .map(function_call_in_expression)
+                .any(|output| output)
+        }
+        _ => false,
     }
 }

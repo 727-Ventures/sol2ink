@@ -1,14 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(min_specialization)]
 
-// Generated with Sol2Ink v1.1.0
-// https://github.com/Supercolony-net/sol2ink
+// Generated with Sol2Ink v2.0.0-beta
+// https://github.com/727-Ventures/sol2ink
 
-///SPDX-License-Identifier: MIT
-///OpenZeppelin Contracts (last updated v4.7.0) (token/ERC721/ERC721.sol)
-/// @dev Implementation of https://eips.ethereum.org/EIPS/eip-721[ERC721] Non-Fungible Token Standard, including
-/// the Metadata extension, but not including the Enumerable extension, which is available separately as
-/// {ERC721Enumerable}.
 #[openbrush::contract]
 pub mod erc_721 {
     use erc_721::*;
@@ -16,25 +11,14 @@ pub mod erc_721 {
         EmitEvent,
         Env,
     };
-    use ink_prelude::vec::Vec;
     use ink_storage::traits::SpreadAllocate;
-    use openbrush::{
-        storage::Mapping,
-        traits::{
-            AccountId,
-            AccountIdExt,
-            Storage,
-            String,
-            ZERO_ADDRESS,
-        },
-    };
+    use openbrush::traits::Storage;
     use scale::{
         Decode,
         Encode,
     };
 
 
-    /// @dev Emitted when `tokenId` token is transferred from `from` to `to`.
     #[ink(event)]
     pub struct Transfer {
         #[ink(topic)]
@@ -45,7 +29,6 @@ pub mod erc_721 {
         token_id: u128,
     }
 
-    /// @dev Emitted when `owner` enables `approved` to manage the `tokenId` token.
     #[ink(event)]
     pub struct Approval {
         #[ink(topic)]
@@ -56,7 +39,6 @@ pub mod erc_721 {
         token_id: u128,
     }
 
-    /// @dev Emitted when `owner` enables or disables (`approved`) `operator` to manage all of its assets.
     #[ink(event)]
     pub struct ApprovalForAll {
         #[ink(topic)]
@@ -99,12 +81,11 @@ pub mod erc_721 {
     }
 
     impl ERC721Contract {
-        /// @dev Initializes the contract by setting a `name` and a `symbol` to the token collection.
         #[ink(constructor)]
         pub fn new(name: String, symbol: String) -> Self {
             ink_lang::codegen::initialize_contract(|instance: &mut Self| {
-                instance.data().name = name;
-                instance.data().symbol = symbol;
+                self.data().name = name;
+                self.data().symbol = symbol;
             })
         }
 

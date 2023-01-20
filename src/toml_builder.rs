@@ -21,14 +21,19 @@
 // SOFTWARE.
 
 const INK_VERSION: &str = "~3.4.0";
+const SOL_2_INK_VERSION: &str = "2.0.0-beta";
 // const OPENBRUSH_VERSION: &str = "2.3.0";
 
-pub fn generate_cargo_toml(mod_name: Option<String>) -> String {
+pub fn generate_cargo_toml(package_name: &str, mod_name: Option<String>) -> String {
     let mut out = String::new();
 
     out.push_str("[package]\n");
-    out.push_str("name = \"sol_2_ink_generated\"\n");
-    out.push_str("version = \"0.1.0\"\n");
+    out.push_str("name = \"");
+    out.push_str(package_name);
+    out.push_str("\"\n");
+    out.push_str("version = ");
+    out.push_str(SOL_2_INK_VERSION);
+    out.push_str("\"\n");
     out.push_str("edition = \"2021\"\n");
     out.push_str("authors = [\"Sol2Ink\"]\n");
     out.push('\n');
@@ -51,7 +56,9 @@ pub fn generate_cargo_toml(mod_name: Option<String>) -> String {
 
     if let Some(mod_name) = mod_name.clone() {
         out.push_str(mod_name.as_str());
-        out.push_str(" = { path = \"..\", default-features = false }\n");
+        out.push_str(" = { path = \"../");
+        out.push_str(mod_name.as_str());
+        out.push_str("\", default-features = false }\n");
     }
 
     out.push('\n');
@@ -75,6 +82,11 @@ pub fn generate_cargo_toml(mod_name: Option<String>) -> String {
     out.push_str("\"scale-info\",\n");
     out.push_str("\"scale-info/std\",\n");
     out.push_str("\"openbrush/std\",\n");
+    if let Some(mod_name) = mod_name.clone() {
+        out.push_str("\"");
+        out.push_str(mod_name.as_str());
+        out.push_str("/std\"\n");
+    }
     out.push_str("]\n");
     out.push('\n');
 

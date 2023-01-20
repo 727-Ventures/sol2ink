@@ -49,13 +49,11 @@ use crate::{
 };
 use std::{
     collections::HashMap,
-    env,
     path::Path,
 };
 
 fn main() {
     let args = cli();
-    env::set_var("RUST_BACKTRACE", "1");
 
     let files = args.files.unwrap_or_else(|| {
         eprintln!("No files provided");
@@ -109,8 +107,9 @@ fn run(path: &String) -> Result<(), ParserError> {
     let content = file_utils::read_file(path)?;
     let mut fields_map = HashMap::new();
     let mut rb_tree = RBTree::new();
+    let mut modifier_map = HashMap::new();
 
-    let mut parser = Parser::new(&mut fields_map, &mut rb_tree);
+    let mut parser = Parser::new(&mut fields_map, &mut rb_tree, &mut modifier_map);
 
     let output = parser.parse_file(&content)?;
 

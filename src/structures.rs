@@ -20,21 +20,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::HashSet;
-
-#[derive(Clone, Debug)]
-pub enum ArrayType {
-    DynamicArray,
-    FixedSizeArray,
-    Mapping,
-}
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 #[derive(Debug, Clone)]
 pub enum MemberType {
-    Variable,
+    Variable(Box<Type>),
+    Constant,
     Function,
     FunctionPrivate,
-    None,
+    None(Box<Type>),
 }
 
 #[derive(Clone, Default)]
@@ -48,7 +45,7 @@ pub struct Contract {
     pub functions: Vec<Function>,
     pub imports: HashSet<String>,
     pub contract_doc: Vec<String>,
-    pub modifiers: Vec<Modifier>,
+    pub modifiers: Vec<Function>,
 }
 
 #[derive(Clone, Default)]
@@ -109,12 +106,12 @@ pub struct EventField {
 #[derive(Clone)]
 pub struct Enum {
     pub name: String,
-    pub values: Vec<EnumField>,
+    pub values: Vec<EnumValue>,
     pub comments: Vec<String>,
 }
 
 #[derive(Default, Clone)]
-pub struct EnumField {
+pub struct EnumValue {
     pub name: String,
     pub comments: Vec<String>,
 }
@@ -133,13 +130,14 @@ pub struct StructField {
     pub comments: Vec<String>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Function {
     pub header: FunctionHeader,
     pub body: Option<Statement>,
+    pub invalid_modifiers: HashMap<(String, String), Function>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct FunctionHeader {
     pub name: String,
     pub params: Vec<FunctionParam>,
@@ -149,6 +147,7 @@ pub struct FunctionHeader {
     pub return_params: Vec<FunctionParam>,
     pub comments: Vec<String>,
     pub modifiers: Vec<Expression>,
+    pub invalid_modifiers: Vec<Expression>,
 }
 
 #[derive(Clone, Debug)]
@@ -184,29 +183,69 @@ pub enum Statement {
 }
 
 #[derive(Clone, Debug)]
+pub enum VariableAccessLocation {
+    Constructor,
+    Modifier,
+    Any,
+}
+
+#[derive(Clone, Debug)]
 pub enum Expression {
+    Add(Box<Expression>, Box<Expression>),
+    And(Box<Expression>, Box<Expression>),
     ArraySubscript(Box<Expression>, Option<Box<Expression>>),
     Assign(Box<Expression>, Box<Expression>),
     AssignAdd(Box<Expression>, Box<Expression>),
+    AssignDivide(Box<Expression>, Box<Expression>),
+    AssignModulo(Box<Expression>, Box<Expression>),
+    AssignMultiply(Box<Expression>, Box<Expression>),
+    AssignSubtract(Box<Expression>, Box<Expression>),
+    BoolLiteral(bool),
+    Delete(Box<Expression>),
+    Divide(Box<Expression>, Box<Expression>),
     FunctionCall(Box<Expression>, Vec<Expression>),
     Equal(Box<Expression>, Box<Expression>),
+    InvalidModifier(String, Vec<Expression>),
     Less(Box<Expression>, Box<Expression>),
+    LessEqual(Box<Expression>, Box<Expression>),
+    List(Vec<Expression>),
     MappingSubscript(Box<Expression>, Vec<Expression>),
     MemberAccess(Box<Expression>, String),
+    Modifier(String, Vec<Expression>),
+    ModifierBody,
+    Modulo(Box<Expression>, Box<Expression>),
+    More(Box<Expression>, Box<Expression>),
     MoreEqual(Box<Expression>, Box<Expression>),
+    Multiply(Box<Expression>, Box<Expression>),
     New(Box<Expression>),
+    Not(Box<Expression>),
     NotEqual(Box<Expression>, Box<Expression>),
     NumberLiteral(String),
     Or(Box<Expression>, Box<Expression>),
+    Parenthesis(Box<Expression>),
     PostDecrement(Box<Expression>),
     PostIncrement(Box<Expression>),
+    Power(Box<Expression>, Box<Expression>),
     PreDecrement(Box<Expression>),
     PreIncrement(Box<Expression>),
     StringLiteral(Vec<String>),
     Subtract(Box<Expression>, Box<Expression>),
+    Ternary(Box<Expression>, Box<Expression>, Box<Expression>),
     Type(Box<Type>),
-    Variable(String, MemberType),
+    Variable(String, MemberType, VariableAccessLocation),
     VariableDeclaration(Box<Type>, String),
+    ShiftLeft(Box<Expression>, Box<Expression>),
+    ShiftRight(Box<Expression>, Box<Expression>),
+    BitwiseAnd(Box<Expression>, Box<Expression>),
+    BitwiseXor(Box<Expression>, Box<Expression>),
+    BitwiseOr(Box<Expression>, Box<Expression>),
+    AssignOr(Box<Expression>, Box<Expression>),
+    AssignAnd(Box<Expression>, Box<Expression>),
+    AssignXor(Box<Expression>, Box<Expression>),
+    AssignShiftLeft(Box<Expression>, Box<Expression>),
+    AssignShiftRight(Box<Expression>, Box<Expression>),
+    HexLiteral(String),
+    NamedFunctionCall(Box<Expression>, Vec<(String, Expression)>),
 }
 
 #[derive(Clone, Debug)]
