@@ -58,7 +58,5 @@ fn sol_file_parser(s: &str) -> Result<CliInput, String> {
 }
 
 pub fn cli() -> Args {
-    
-
     Args::parse()
 }

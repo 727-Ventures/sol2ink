@@ -34,11 +34,13 @@ use rbtree::RBTree;
 use solang_parser::{
     parse,
     pt::{
+        Comment,
         ContractDefinition,
         ContractPart,
         ContractTy,
         EnumDefinition,
         EventDefinition,
+        EventParameter,
         Expression as SolangExpression,
         FunctionAttribute,
         FunctionDefinition,
@@ -84,16 +86,30 @@ impl From<std::io::Error> for ParserError {
     }
 }
 
+#[derive(Debug)]
+pub enum Node {
+    ContractDefinition(ContractDefinition),
+    Comments(String),
+    EventDefinition(EventDefinition),
+    EventParameter(EventParameter),
+    EnumDefinition(EnumDefinition),
+    FunctionDefinition(FunctionDefinition),
+    Identifier(Identifier),
+    SolangStatement(SolangStatement),
+    StructDefinition(StructDefinition),
+    VariableDeclaration(VariableDeclaration),
+    VariableDefinition(VariableDefinition),
+}
+
 pub struct Parser<'a> {
     members_map: &'a mut HashMap<String, MemberType>,
-    rb_tree: &'a mut RBTree<usize, String>, /* TODO
-                                             * binary search tree mapping key: usize (Loc::File(_,key,_)), value: Statement */
+    pub rb_tree: &'a mut RBTree<usize, Node>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(
         fields_map: &'a mut HashMap<String, MemberType>,
-        rb_tree: &'a mut RBTree<usize, String>,
+        rb_tree: &'a mut RBTree<usize, Node>,
     ) -> Self {
         Parser {
             members_map: fields_map,
@@ -108,19 +124,17 @@ impl<'a> Parser<'a> {
         let source_unit = token_tree.0;
         let comments = token_tree.1;
 
-        // TODO
-        // iterate over comments and add them to a structure (binary tree key: loc, value: comment)
         comments.iter().for_each(|comment| {
             match comment {
-                solang_parser::pt::Comment::Line(loc, comment) => {
-                    self.rb_tree.insert(loc.start(), comment.clone());
+                Comment::Line(loc, comment)
+                | Comment::Block(loc, comment)
+                | Comment::DocLine(loc, comment)
+                | Comment::DocBlock(loc, comment) => {
+                    self.rb_tree
+                        .insert(loc.start(), Node::Comments(comment.clone()));
                 }
-                solang_parser::pt::Comment::Block(loc, comment) => todo!(),
-                solang_parser::pt::Comment::DocLine(loc, comment) => todo!(),
-                solang_parser::pt::Comment::DocBlock(loc, comment) => todo!(),
             }
         });
-        // this binary tree would be field of parser
 
         for source_unit_part in source_unit.0.iter() {
             match &source_unit_part {
@@ -146,19 +160,29 @@ impl<'a> Parser<'a> {
                     "Abstract contract can not be instantiated so we only create impl and trait for it"
                 )
             }
-            ContractTy::Contract(loc /* loc */) => {
-                // TODO
-                // add to the tree (loc, contract)
+            ContractTy::Contract(loc) => {
+                self.rb_tree.insert(
+                    loc.start(),
+                    Node::ContractDefinition(contract_definition.clone()),
+                );
                 Ok(ParserOutput::Contract(
                     self.parse_contract(contract_definition)?,
                 ))
             }
-            ContractTy::Library(_) => {
+            ContractTy::Library(loc) => {
+                self.rb_tree.insert(
+                    loc.start(),
+                    Node::ContractDefinition(contract_definition.clone()),
+                );
                 Ok(ParserOutput::Library(
                     self.parse_library(contract_definition)?,
                 ))
             }
-            ContractTy::Interface(_) => {
+            ContractTy::Interface(loc) => {
+                self.rb_tree.insert(
+                    loc.start(),
+                    Node::ContractDefinition(contract_definition.clone()),
+                );
                 Ok(ParserOutput::Interface(
                     self.parse_interface(contract_definition)?,
                 ))
@@ -386,15 +410,24 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_struct(&self, struct_definition: &StructDefinition) -> Result<Struct, ParserError> {
+    fn parse_struct(
+        &mut self,
+        struct_definition: &StructDefinition,
+    ) -> Result<Struct, ParserError> {
+        self.rb_tree.insert(
+            struct_definition.loc.start(),
+            Node::StructDefinition(struct_definition.clone()),
+        );
         let name = self.parse_identifier(&struct_definition.name);
-        // TODO
-        // struct_definition.loc -> add to tree key:struct_definition.loc, val: struct_definition
 
         let fields: Vec<StructField> = struct_definition
             .fields
             .iter()
             .filter_map(|variable_declaration| {
+                self.rb_tree.insert(
+                    variable_declaration.loc.start(),
+                    Node::VariableDeclaration(variable_declaration.clone()),
+                );
                 Some(StructField {
                     name: self.parse_identifier(&variable_declaration.name),
                     field_type: self.parse_type(&variable_declaration.ty).ok()?,
@@ -409,13 +442,21 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_event(&self, event_definition: &EventDefinition) -> Result<Event, ParserError> {
+    fn parse_event(&mut self, event_definition: &EventDefinition) -> Result<Event, ParserError> {
+        self.rb_tree.insert(
+            event_definition.loc.start(),
+            Node::EventDefinition(event_definition.clone()),
+        );
         let name = self.parse_identifier(&event_definition.name);
 
         let fields: Vec<EventField> = event_definition
             .fields
             .iter()
             .filter_map(|variable_declaration| {
+                self.rb_tree.insert(
+                    variable_declaration.loc.start(),
+                    Node::EventParameter(variable_declaration.clone()),
+                );
                 Some(EventField {
                     name: self.parse_identifier(&variable_declaration.name),
                     field_type: self.parse_type(&variable_declaration.ty).ok()?,
@@ -431,13 +472,18 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_enum(&self, event_definition: &EnumDefinition) -> Result<Enum, ParserError> {
-        let name = self.parse_identifier(&event_definition.name);
+    fn parse_enum(&mut self, enum_definition: &EnumDefinition) -> Result<Enum, ParserError> {
+        self.rb_tree.insert(
+            enum_definition.loc.start(),
+            Node::EnumDefinition(enum_definition.clone()),
+        );
+        let name = self.parse_identifier(&enum_definition.name);
 
-        let values: Vec<EnumField> = event_definition
+        let values: Vec<EnumField> = enum_definition
             .values
             .iter()
             .map(|enum_value| {
+                self.insert_enum_field_to_tree(enum_value.clone());
                 EnumField {
                     name: self.parse_identifier(enum_value),
                     comments: Default::default(),
@@ -451,10 +497,21 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn insert_enum_field_to_tree(&mut self, enum_value: Option<Identifier>) {
+        if let Some(value) = enum_value {
+            self.rb_tree
+                .insert(value.loc.start(), Node::Identifier(value));
+        }
+    }
+
     fn parse_storage_field(
-        &self,
+        &mut self,
         variable_definition: &VariableDefinition,
     ) -> Result<ContractField, ParserError> {
+        self.rb_tree.insert(
+            variable_definition.loc.start(),
+            Node::VariableDefinition(variable_definition.clone()),
+        );
         let field_type = self.parse_type(&variable_definition.ty)?;
         let name = self.parse_identifier(&variable_definition.name);
         let constant = variable_definition
@@ -481,7 +538,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function(
-        &self,
+        &mut self,
         function_definition: &FunctionDefinition,
     ) -> Result<Function, ParserError> {
         let header = self.parse_function_header(function_definition);
@@ -509,7 +566,14 @@ impl<'a> Parser<'a> {
         Ok(Function { header, body })
     }
 
-    fn parse_function_header(&self, function_definition: &FunctionDefinition) -> FunctionHeader {
+    fn parse_function_header(
+        &mut self,
+        function_definition: &FunctionDefinition,
+    ) -> FunctionHeader {
+        self.rb_tree.insert(
+            function_definition.loc.start(),
+            Node::FunctionDefinition(function_definition.clone()),
+        );
         let name = self.parse_identifier(&function_definition.name);
         let params = function_definition
             .params
@@ -563,10 +627,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_statement(&self, statement: &SolangStatement) -> Result<Statement, ParserError> {
-        Ok(match statement {
+    fn parse_statement(&mut self, statement: &SolangStatement) -> Result<Statement, ParserError> {
+        let (result, location) = match statement {
             SolangStatement::Block {
-                loc: _,
+                loc,
                 unchecked,
                 statements,
             } => {
@@ -576,9 +640,9 @@ impl<'a> Parser<'a> {
                     .map(|result| result.unwrap())
                     .collect::<Vec<_>>();
                 if *unchecked {
-                    Statement::UncheckedBlock(parsed_statements)
+                    (Statement::UncheckedBlock(parsed_statements), loc)
                 } else {
-                    Statement::Block(parsed_statements)
+                    (Statement::Block(parsed_statements), loc)
                 }
             }
             SolangStatement::Assembly {
@@ -594,32 +658,38 @@ impl<'a> Parser<'a> {
                 println!("{statement:?}");
                 todo!()
             }
-            SolangStatement::If(_, expression, if_true, if_false) => {
+            SolangStatement::If(loc, expression, if_true, if_false) => {
                 let parsed_expression = self.parse_expression(expression);
                 let parsed_if_true = Box::new(self.parse_statement(if_true)?);
                 let parsed_if_false = if_false
                     .as_ref()
                     .map(|statement| self.parse_statement(statement))
                     .map(|result| Box::new(result.unwrap()));
-                Statement::If(parsed_expression, parsed_if_true, parsed_if_false)
+                (
+                    Statement::If(parsed_expression, parsed_if_true, parsed_if_false),
+                    loc,
+                )
             }
-            SolangStatement::While(_, expression, statement) => {
+            SolangStatement::While(loc, expression, solang_statement) => {
                 let parsed_expression = self.parse_expression(expression);
-                let parsed_statement = Box::new(self.parse_statement(statement)?);
-                Statement::While(parsed_expression, parsed_statement)
+                let parsed_statement = Box::new(self.parse_statement(solang_statement)?);
+                (Statement::While(parsed_expression, parsed_statement), loc)
             }
-            SolangStatement::Expression(_, expression) => {
+            SolangStatement::Expression(loc, expression) => {
                 let parsed_expression = self.parse_expression(expression);
-                Statement::Expression(parsed_expression)
+                (Statement::Expression(parsed_expression), loc)
             }
-            SolangStatement::VariableDefinition(_, declaration, initial_value_maybe) => {
+            SolangStatement::VariableDefinition(loc, declaration, initial_value_maybe) => {
                 let parsed_declaration = self.parse_variable_declaration(declaration)?;
                 let parsed_initial_value = initial_value_maybe
                     .as_ref()
                     .map(|expression| self.parse_expression(expression));
-                Statement::VariableDefinition(parsed_declaration, parsed_initial_value)
+                (
+                    Statement::VariableDefinition(parsed_declaration, parsed_initial_value),
+                    loc,
+                )
             }
-            SolangStatement::For(_, variable_definition, condition, on_pass, body) => {
+            SolangStatement::For(loc, variable_definition, condition, on_pass, body) => {
                 let parsed_variable_definition = variable_definition
                     .as_ref()
                     .map(|statement| self.parse_statement(statement))
@@ -635,51 +705,65 @@ impl<'a> Parser<'a> {
                     .as_ref()
                     .map(|statement| self.parse_statement(statement))
                     .map(|result| Box::new(result.unwrap()));
-                Statement::For(
-                    parsed_variable_definition,
-                    parsed_condition,
-                    parsed_on_pass,
-                    parsed_body,
+                (
+                    Statement::For(
+                        parsed_variable_definition,
+                        parsed_condition,
+                        parsed_on_pass,
+                        parsed_body,
+                    ),
+                    loc,
                 )
             }
-            SolangStatement::DoWhile(_, body, condition) => {
+            SolangStatement::DoWhile(loc, body, condition) => {
                 let parsed_condition = self.parse_expression(condition);
                 let parsed_body = Box::new(self.parse_statement(body)?);
-                Statement::DoWhile(parsed_body, parsed_condition)
+                (Statement::DoWhile(parsed_body, parsed_condition), loc)
             }
-            SolangStatement::Continue(_) => Statement::Continue,
-            SolangStatement::Break(_) => Statement::Break,
-            SolangStatement::Return(_, expression) => {
+            SolangStatement::Continue(loc) => (Statement::Continue, loc),
+            SolangStatement::Break(loc) => (Statement::Break, loc),
+            SolangStatement::Return(loc, expression) => {
                 let parsed_expression = expression
                     .as_ref()
                     .map(|expression| self.parse_expression(expression));
-                Statement::Return(parsed_expression)
+                (Statement::Return(parsed_expression), loc)
             }
-            SolangStatement::Revert(_, identifier_path, args) => {
+            SolangStatement::Revert(loc, identifier_path, args) => {
                 let identifier_path = identifier_path
                     .as_ref()
                     .map(|identifier_path| self.parse_identifier_path(identifier_path))
                     .unwrap_or(String::from("_"));
                 let parsed_args = self.parse_expression_vec(args);
-                Statement::Revert(identifier_path, parsed_args)
+                (Statement::Revert(identifier_path, parsed_args), loc)
             }
-            SolangStatement::RevertNamedArgs(_, _, _) => todo!(),
-            SolangStatement::Emit(_, expression) => {
+            SolangStatement::RevertNamedArgs(_, _, _) => {
+                todo!()
+            }
+            SolangStatement::Emit(loc, expression) => {
                 let parsed_expression = self.parse_expression(expression);
-                Statement::Emit(parsed_expression)
+                (Statement::Emit(parsed_expression), loc)
             }
-            SolangStatement::Try(_, expression, _, _) => {
+            SolangStatement::Try(loc, expression, _, _) => {
                 let parsed_expression = self.parse_expression(expression);
-                Statement::Try(parsed_expression)
+                (Statement::Try(parsed_expression), loc)
             }
-            SolangStatement::Error(_) => todo!(),
-        })
+            SolangStatement::Error(_) => {
+                todo!()
+            }
+        };
+        self.rb_tree
+            .insert(location.start(), Node::SolangStatement(statement.clone()));
+        Ok(result)
     }
 
     fn parse_variable_declaration(
-        &self,
+        &mut self,
         variable_declaration: &VariableDeclaration,
     ) -> Result<Expression, ParserError> {
+        self.rb_tree.insert(
+            variable_declaration.loc.start(),
+            Node::VariableDeclaration(variable_declaration.clone()),
+        );
         let parsed_name = self
             .parse_identifier(&variable_declaration.name)
             .to_case(Snake);
