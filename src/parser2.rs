@@ -103,8 +103,8 @@ pub enum Node {
 
 pub struct Parser<'a> {
     members_map: &'a mut HashMap<String, MemberType>,
+    rb_tree: &'a mut RBTree<usize, Node>,
     modifiers_map: &'a mut HashMap<String, FunctionDefinition>,
-    pub rb_tree: &'a mut RBTree<usize, Node>,
 }
 
 impl<'a> Parser<'a> {
@@ -498,12 +498,12 @@ impl<'a> Parser<'a> {
         );
         let name = self.parse_identifier(&enum_definition.name);
 
-        let values: Vec<EnumValue> = event_definition
+        let values: Vec<EnumValue> = enum_definition
             .values
             .iter()
             .map(|enum_value| {
                 self.insert_enum_field_to_tree(enum_value.clone());
-                EnumField {
+                EnumValue {
                     name: self.parse_identifier(enum_value),
                     comments: Default::default(),
                 }
@@ -567,7 +567,7 @@ impl<'a> Parser<'a> {
         for modifier in header.invalid_modifiers.clone() {
             match modifier {
                 Expression::InvalidModifier(name, _) => {
-                    if let Some(function) = self.modifiers_map.get(&name) {
+                    if let Some(function) = self.modifiers_map.clone().get(&name) {
                         invalid_modifiers.insert(
                             (header.name.clone(), name),
                             Function {
@@ -712,7 +712,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(
-        &self,
+        &mut self,
         statement: &SolangStatement,
         location: VariableAccessLocation,
     ) -> Result<Statement, ParserError> {
@@ -758,7 +758,7 @@ impl<'a> Parser<'a> {
                     loc,
                 )
             }
-            SolangStatement::While(_, expression, statement) => {
+            SolangStatement::While(loc, expression, statement) => {
                 let parsed_expression = self.parse_expression(expression, location.clone());
                 let parsed_statement = Box::new(self.parse_statement(statement, location)?);
                 (Statement::While(parsed_expression, parsed_statement), loc)
@@ -837,8 +837,10 @@ impl<'a> Parser<'a> {
                 todo!()
             }
         };
-        self.rb_tree
-            .insert(result_location.start(), Node::SolangStatement(statement.clone()));
+        self.rb_tree.insert(
+            result_location.start(),
+            Node::SolangStatement(statement.clone()),
+        );
         Ok(result)
     }
 
